@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            compiler: gcc-12
+            cc: gcc-12
+            cxx: g++-12
+          - os: ubuntu-22.04
+            compiler: clang-15
+            cc: clang-15
+            cxx: clang++-15
+          - os: macos-13
+            compiler: clang
+            cc: clang
+            cxx: clang++
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgtest-dev
+          sudo apt-get install -y ${{ matrix.cc }} || true
+
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja googletest
+
+      - name: Download stb headers
+        run: |
+          curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image.h \
+            -o third_party/stb_image.h
+          curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h \
+            -o third_party/stb_image_write.h
+          curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image_resize2.h \
+            -o third_party/stb_image_resize2.h
+
+      - name: Configure
+        env:
+          CC:  ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: cd build && ctest --output-on-failure

@@ -1,0 +1,15 @@
+build/
+.cache/
+*.o
+*.a
+*.out
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+.DS_Store
+.vscode/
+.idea/
+third_party/stb_image.h
+third_party/stb_image_write.h
+third_party/stb_image_resize2.h
