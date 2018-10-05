@@ -228,16 +228,3 @@ val result = BatchPress.runBatch(
 ## License
 
 MIT © [Marco Antônio Bueno da Silva](mailto:bueno.mario@gmail.com)
-
----
-
-## Portfolio
-
-| Project | Skills demonstrated |
-|---|---|
-| **batchpress** ← you are here | Concurrency · libav · shared library · Android NDK · CLI design |
-| [order-book](../order-book) | Lock-free structures · trading systems |
-| [http-server](../http-server) | TCP sockets · event loop · HTTP/1.1 |
-| [json-parser](../json-parser) | Recursive descent · templates · zero-alloc |
-
-➡️ **[Full portfolio →](https://YOUR_USERNAME.github.io/cpp-portfolio)**
