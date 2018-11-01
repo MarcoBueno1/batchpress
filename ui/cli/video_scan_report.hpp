@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * Copyright (C) 2018 Marco Antônio Bueno da Silva <bueno.mario@gmail.com>
+ * Copyright (C) 2018 Marco Antônio Bueno da Silva <bueno.marco@gmail.com>
  */
 
 #pragma once

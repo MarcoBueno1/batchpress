@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2018 Marco Antônio Bueno da Silva <bueno.mario@gmail.com>
+# Copyright (C) 2018 Marco Antônio Bueno da Silva <bueno.marco@gmail.com>
 #
 # generate_test_videos.sh
 # Generates synthetic test videos in multiple formats using ffmpeg.

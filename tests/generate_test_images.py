@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2018 Marco Antônio Bueno da Silva <bueno.mario@gmail.com>
+# Copyright (C) 2018 Marco Antônio Bueno da Silva <bueno.marco@gmail.com>
 #
 # generate_test_images.py
 # Generates synthetic test images in multiple formats and resolutions.

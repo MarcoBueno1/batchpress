@@ -227,4 +227,4 @@ val result = BatchPress.runBatch(
 
 ## License
 
-MIT © [Marco Antônio Bueno da Silva](mailto:bueno.mario@gmail.com)
+MIT © [Marco Antônio Bueno da Silva](mailto:bueno.marco@gmail.com)

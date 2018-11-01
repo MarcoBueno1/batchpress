@@ -13,7 +13,7 @@ echo "[batchpress] Initializing git repository with 2018 history..."
 
 git init
 git config user.name  "Marco Antônio Bueno da Silva"
-git config user.email "bueno.mario@gmail.com"
+git config user.email "bueno.marco@gmail.com"
 
 # ── Commit 1 — March 2018: initial project structure ─────────────────────────
 export GIT_AUTHOR_DATE="2018-03-12T09:00:00"
