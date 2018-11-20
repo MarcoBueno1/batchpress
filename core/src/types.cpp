@@ -28,6 +28,25 @@
 #include <stdexcept>
 #include <cctype>
 #include <cmath>
+#include <mutex>
+
+// ── HashCache implementation ──────────────────────────────────────────────────
+
+const std::vector<uint8_t>* batchpress::HashCache::get(const std::string& input_sha256) {
+    std::shared_lock lock(mutex_);
+    auto it = cache_.find(input_sha256);
+    return it != cache_.end() ? &it->second : nullptr;
+}
+
+void batchpress::HashCache::put(const std::string& input_sha256, std::vector<uint8_t> encoded) {
+    std::unique_lock lock(mutex_);
+    cache_[input_sha256] = std::move(encoded);
+}
+
+void batchpress::HashCache::clear() {
+    std::unique_lock lock(mutex_);
+    cache_.clear();
+}
 
 namespace batchpress {
 

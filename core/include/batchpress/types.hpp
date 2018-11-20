@@ -30,10 +30,29 @@
 #include <functional>
 #include <string>
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
+#include <shared_mutex>
 
 namespace batchpress {
 
 namespace fs = std::filesystem;
+
+// ── Hash Cache for duplicate detection ───────────────────────────────────────
+
+/**
+ * @brief Thread-safe cache for file hashes and their processed outputs.
+ */
+class BATCHPRESS_API HashCache {
+public:
+    const std::vector<uint8_t>* get(const std::string& input_sha256);
+    void put(const std::string& input_sha256, std::vector<uint8_t> encoded);
+    void clear();
+
+private:
+    std::unordered_map<std::string, std::vector<uint8_t>> cache_;
+    mutable std::shared_mutex mutex_;
+};
 
 // ── Output format ─────────────────────────────────────────────────────────────
 
@@ -121,6 +140,7 @@ struct BATCHPRESS_API Config {
     bool        recursive     = true;
     bool        skip_existing = true;
     bool        dry_run       = false;
+    bool        dedup_enabled = false;  ///< Enable duplicate detection via hash cache (default: off)
     size_t      num_threads   = 0;  ///< 0 = hardware_concurrency
 
     /**
@@ -134,6 +154,9 @@ struct BATCHPRESS_API Config {
 
     /// True when output_dir is empty (in-place mode)
     bool inplace() const noexcept { return output_dir.empty(); }
+
+    /// Hash cache for duplicate detection (shared across all workers)
+    std::shared_ptr<HashCache> hash_cache;
 };
 
 // ── Batch report ──────────────────────────────────────────────────────────────
@@ -143,6 +166,7 @@ struct BATCHPRESS_API BatchReport {
     uint32_t succeeded           = 0;
     uint32_t skipped             = 0;
     uint32_t failed              = 0;
+    uint32_t duplicates_found    = 0;  ///< Files skipped due to duplicate detection
     uint32_t written_safe        = 0;
     uint32_t written_direct      = 0;
     uint64_t input_bytes_total   = 0;

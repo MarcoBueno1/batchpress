@@ -243,6 +243,42 @@ TaskResult process_image(const fs::path& input_path, const Config& cfg) {
             return result;
         }
 
+        // ── 2b. Duplicate detection via hash cache ────────────────────────
+        // Only check duplicates if skip_existing didn't trigger
+        // Also skip if in-place (dedup only makes sense for copy mode)
+        std::string input_sha256;
+        if (cfg.dedup_enabled && cfg.hash_cache && !cfg.inplace() && !cfg.dry_run) {
+            // Calculate hash of input file
+            {
+                std::ifstream raw(input_path, std::ios::binary);
+                std::vector<uint8_t> raw_bytes(
+                    (std::istreambuf_iterator<char>(raw)),
+                     std::istreambuf_iterator<char>());
+                input_sha256 = sha256::hash(raw_bytes.data(), raw_bytes.size());
+            }
+
+            // Check cache for duplicate
+            if (const auto* cached = cfg.hash_cache->get(input_sha256)) {
+                // Found duplicate! Copy cached output
+                if (!cfg.dry_run) {
+                    if (!cfg.inplace()) {
+                        fs::create_directories(out_path.parent_path());
+                    }
+                    std::ofstream f(out_path, std::ios::binary | std::ios::trunc);
+                    f.write(reinterpret_cast<const char*>(cached->data()),
+                            static_cast<std::streamsize>(cached->size()));
+                    if (!f) throw std::runtime_error("Cannot write cached output: " + out_path.string());
+                }
+                
+                result.success      = true;
+                result.skipped      = true;  // Mark as skipped (duplicate)
+                result.output_bytes = cached->size();
+                result.elapsed_ms   = std::chrono::duration<double,std::milli>(
+                                          Clock::now()-t0).count();
+                return result;
+            }
+        }
+
         // ── 3. Load into RAM ──────────────────────────────────────────────
         int src_w=0, src_h=0, channels=0;
         unsigned char* pixels = stbi_load(
@@ -347,6 +383,11 @@ TaskResult process_image(const fs::path& input_path, const Config& cfg) {
         result.success      = true;
         result.output_bytes = fs::file_size(out_path);
 
+        // ── 8. Save to cache for duplicate detection ────────────────────────
+        if (cfg.dedup_enabled && cfg.hash_cache && !input_sha256.empty()) {
+            cfg.hash_cache->put(input_sha256, encoded);
+        }
+
     } catch (const std::exception& ex) {
         result.success   = false;
         result.error_msg = ex.what();
@@ -362,7 +403,13 @@ TaskResult process_image(const fs::path& input_path, const Config& cfg) {
 BatchReport run_batch(const Config& cfg) {
     using Clock = std::chrono::steady_clock;
 
-    auto images = collect_images(cfg);
+    // Initialize hash cache if dedup is enabled
+    Config cfg_with_cache = cfg;
+    if (cfg.dedup_enabled && !cfg.hash_cache) {
+        cfg_with_cache.hash_cache = std::make_shared<HashCache>();
+    }
+
+    auto images = collect_images(cfg_with_cache);
     if (images.empty()) return {};
 
     if (!cfg.inplace() && !cfg.dry_run)
@@ -385,7 +432,7 @@ BatchReport run_batch(const Config& cfg) {
     std::vector<std::future<TaskResult>> futures;
     futures.reserve(images.size());
     for (const auto& img : images)
-        futures.push_back(pool.submit(process_image, img, std::cref(cfg)));
+        futures.push_back(pool.submit(process_image, img, std::cref(cfg_with_cache)));
 
     for (auto& fut : futures) {
         TaskResult res = fut.get();
@@ -395,7 +442,12 @@ BatchReport run_batch(const Config& cfg) {
         {
             std::lock_guard lock(report_mu);
             if (res.skipped) {
-                ++report.skipped;
+                // Check if it's a duplicate (has output_bytes but was skipped)
+                if (res.output_bytes > 0 && res.input_bytes > 0) {
+                    ++report.duplicates_found;
+                } else {
+                    ++report.skipped;
+                }
             } else if (res.success) {
                 ++report.succeeded;
                 report.input_bytes_total  += res.input_bytes;
