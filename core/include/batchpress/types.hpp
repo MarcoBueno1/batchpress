@@ -102,6 +102,7 @@ struct BATCHPRESS_API TaskResult {
     fs::path    output_path;
     bool        success         = false;
     bool        skipped         = false;
+    bool        is_duplicate    = false;  ///< True if skipped due to duplicate detection (not skip_existing)
     bool        dry_run         = false;
     WriteMode   write_mode      = WriteMode::Safe;
     uint64_t    input_bytes     = 0;
@@ -140,7 +141,7 @@ struct BATCHPRESS_API Config {
     bool        recursive     = true;
     bool        skip_existing = true;
     bool        dry_run       = false;
-    bool        dedup_enabled = false;  ///< Enable duplicate detection via hash cache (default: off)
+    bool        dedup_enabled = true;   ///< Enable duplicate detection via hash cache (default: on)
     size_t      num_threads   = 0;  ///< 0 = hardware_concurrency
 
     /**

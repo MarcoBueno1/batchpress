@@ -46,6 +46,7 @@ COMMON OPTIONS:
   --threads <n>         Worker threads (default: CPU cores)
   --no-recursive        Do not traverse subdirectories
   --overwrite           Overwrite existing output files (copy mode only)
+  --no-dedup            Disable duplicate detection (default: enabled)
   --samples <n>         Scan: images sampled per dir (default: 5, 0=all)
   --verbose             Per-file details or all scan candidates
   --help                Show this help
@@ -164,6 +165,10 @@ Args parse_args(int argc, char* argv[]) {
         else if (arg == "--overwrite") {
             args.process_cfg.skip_existing = false;
             args.video_cfg.skip_existing   = false;
+        }
+        else if (arg == "--no-dedup") {
+            args.process_cfg.dedup_enabled = false;
+            args.video_cfg.dedup_enabled   = false;
         }
         else if (arg == "--samples") {
             args.scan_cfg.samples_per_dir =

@@ -271,7 +271,8 @@ TaskResult process_image(const fs::path& input_path, const Config& cfg) {
                 }
                 
                 result.success      = true;
-                result.skipped      = true;  // Mark as skipped (duplicate)
+                result.skipped      = true;
+                result.is_duplicate = true;  // Mark as duplicate (not skip_existing)
                 result.output_bytes = cached->size();
                 result.elapsed_ms   = std::chrono::duration<double,std::milli>(
                                           Clock::now()-t0).count();
@@ -442,11 +443,10 @@ BatchReport run_batch(const Config& cfg) {
         {
             std::lock_guard lock(report_mu);
             if (res.skipped) {
-                // Check if it's a duplicate (has output_bytes but was skipped)
-                if (res.output_bytes > 0 && res.input_bytes > 0) {
+                if (res.is_duplicate) {
                     ++report.duplicates_found;
                 } else {
-                    ++report.skipped;
+                    ++report.skipped;  // skip_existing
                 }
             } else if (res.success) {
                 ++report.succeeded;

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "export.hpp"
+#include "types.hpp"  // Para HashCache
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -106,6 +107,7 @@ struct BATCHPRESS_API VideoConfig {
     bool           recursive    = true;
     bool           dry_run      = false;
     bool           skip_existing= true;
+    bool           dedup_enabled= true;   ///< Enable duplicate detection via hash cache
     size_t         num_threads  = 0; ///< 0 = hardware_concurrency
 
     // ── Codec selection ───────────────────────────────────────────────────
@@ -148,6 +150,9 @@ struct BATCHPRESS_API VideoConfig {
     )> on_progress;
 
     bool inplace() const noexcept { return output_dir.empty(); }
+
+    /// Hash cache for duplicate detection (shared across all workers)
+    std::shared_ptr<HashCache> hash_cache;
 };
 
 // ── Per-file video metadata ───────────────────────────────────────────────────
@@ -176,6 +181,7 @@ struct BATCHPRESS_API VideoResult {
     fs::path      output_path;
     bool          success        = false;
     bool          skipped        = false;
+    bool          is_duplicate   = false;  ///< True if skipped due to duplicate detection
     bool          dry_run        = false;
     uint64_t      input_bytes    = 0;
     uint64_t      output_bytes   = 0;
@@ -200,6 +206,7 @@ struct BATCHPRESS_API VideoBatchReport {
     uint32_t succeeded           = 0;
     uint32_t skipped             = 0;
     uint32_t failed              = 0;
+    uint32_t duplicates_found    = 0;  ///< Files skipped due to duplicate detection
     uint64_t input_bytes_total   = 0;
     uint64_t output_bytes_total  = 0;
     double   elapsed_sec         = 0.0;
