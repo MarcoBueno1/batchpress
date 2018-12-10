@@ -25,22 +25,25 @@
 
 #include "batchpress/types.hpp"
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <cctype>
 #include <cmath>
 #include <mutex>
 
+namespace fs = std::filesystem;
+
 // ── HashCache implementation ──────────────────────────────────────────────────
 
-const std::vector<uint8_t>* batchpress::HashCache::get(const std::string& input_sha256) {
+const fs::path* batchpress::HashCache::get(const std::string& input_sha256) {
     std::shared_lock lock(mutex_);
     auto it = cache_.find(input_sha256);
     return it != cache_.end() ? &it->second : nullptr;
 }
 
-void batchpress::HashCache::put(const std::string& input_sha256, std::vector<uint8_t> encoded) {
+void batchpress::HashCache::put(const std::string& input_sha256, const fs::path& output_path) {
     std::unique_lock lock(mutex_);
-    cache_[input_sha256] = std::move(encoded);
+    cache_[input_sha256] = output_path;
 }
 
 void batchpress::HashCache::clear() {

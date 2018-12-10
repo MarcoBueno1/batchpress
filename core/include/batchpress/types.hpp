@@ -41,16 +41,16 @@ namespace fs = std::filesystem;
 // ── Hash Cache for duplicate detection ───────────────────────────────────────
 
 /**
- * @brief Thread-safe cache for file hashes and their processed outputs.
+ * @brief Thread-safe cache for file hashes and their processed output paths.
  */
 class BATCHPRESS_API HashCache {
 public:
-    const std::vector<uint8_t>* get(const std::string& input_sha256);
-    void put(const std::string& input_sha256, std::vector<uint8_t> encoded);
+    const fs::path* get(const std::string& input_sha256);
+    void put(const std::string& input_sha256, const fs::path& output_path);
     void clear();
 
 private:
-    std::unordered_map<std::string, std::vector<uint8_t>> cache_;
+    std::unordered_map<std::string, fs::path> cache_;
     mutable std::shared_mutex mutex_;
 };
 

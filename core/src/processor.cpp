@@ -258,22 +258,19 @@ TaskResult process_image(const fs::path& input_path, const Config& cfg) {
             }
 
             // Check cache for duplicate
-            if (const auto* cached = cfg.hash_cache->get(input_sha256)) {
-                // Found duplicate! Copy cached output
+            if (const auto* cached_path = cfg.hash_cache->get(input_sha256)) {
+                // Found duplicate! Copy cached output file
                 if (!cfg.dry_run) {
                     if (!cfg.inplace()) {
                         fs::create_directories(out_path.parent_path());
                     }
-                    std::ofstream f(out_path, std::ios::binary | std::ios::trunc);
-                    f.write(reinterpret_cast<const char*>(cached->data()),
-                            static_cast<std::streamsize>(cached->size()));
-                    if (!f) throw std::runtime_error("Cannot write cached output: " + out_path.string());
+                    fs::copy_file(*cached_path, out_path, fs::copy_options::overwrite_existing);
                 }
-                
+
                 result.success      = true;
                 result.skipped      = true;
                 result.is_duplicate = true;  // Mark as duplicate (not skip_existing)
-                result.output_bytes = cached->size();
+                result.output_bytes = fs::file_size(*cached_path);
                 result.elapsed_ms   = std::chrono::duration<double,std::milli>(
                                           Clock::now()-t0).count();
                 return result;
@@ -386,7 +383,7 @@ TaskResult process_image(const fs::path& input_path, const Config& cfg) {
 
         // ── 8. Save to cache for duplicate detection ────────────────────────
         if (cfg.dedup_enabled && cfg.hash_cache && !input_sha256.empty()) {
-            cfg.hash_cache->put(input_sha256, encoded);
+            cfg.hash_cache->put(input_sha256, out_path);
         }
 
     } catch (const std::exception& ex) {
