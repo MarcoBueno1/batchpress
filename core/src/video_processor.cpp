@@ -474,20 +474,22 @@ VideoResult process_video(const fs::path& input_path, const VideoConfig& cfg) {
             // Check cache for duplicate
             if (const auto* cached_path = cfg.hash_cache->get(input_sha256)) {
                 // Found duplicate! Copy cached output file
-                if (!cfg.dry_run) {
+                // First verify the cached file still exists
+                if (!cfg.dry_run && fs::exists(*cached_path)) {
                     if (!cfg.inplace()) {
                         fs::create_directories(out_path.parent_path());
                     }
                     fs::copy_file(*cached_path, out_path, fs::copy_options::overwrite_existing);
-                }
 
-                result.success      = true;
-                result.skipped      = true;
-                result.is_duplicate = true;  // Mark as duplicate (not skip_existing)
-                result.output_bytes = fs::file_size(*cached_path);
-                result.elapsed_sec  = std::chrono::duration<double>(
-                                          Clock::now() - t0).count();
-                return result;
+                    result.success      = true;
+                    result.skipped      = true;
+                    result.is_duplicate = true;
+                    result.output_bytes = fs::file_size(*cached_path);
+                    result.elapsed_sec  = std::chrono::duration<double>(
+                                              Clock::now() - t0).count();
+                    return result;
+                }
+                // Cached file no longer exists, fall through to process normally
             }
         }
 
