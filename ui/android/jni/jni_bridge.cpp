@@ -806,6 +806,220 @@ Java_com_batchpress_BatchPress_runVideoScan(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  VIDEO FILE SCAN — scanVideoFiles()
+// ══════════════════════════════════════════════════════════════════════════════
+
+JNIEXPORT jobject JNICALL
+Java_com_batchpress_BatchPress_scanVideoFiles(
+    JNIEnv*  env, jclass,
+    jstring  j_root_dir,
+    jboolean j_recursive,
+    jstring  j_vcodec,
+    jint     j_crf,
+    jstring  j_max_res,
+    jint     j_audio_bps,
+    jint     j_threads,
+    jobject  j_listener)
+{
+    // Determine resolution cap
+    batchpress::ResolutionCap res_cap = batchpress::ResolutionCap::Cap1080p;
+    std::string mr = JSTR(env, j_max_res);
+    if      (mr == "1080p")    res_cap = batchpress::ResolutionCap::Cap1080p;
+    else if (mr == "4k")       res_cap = batchpress::ResolutionCap::Cap4K;
+    else if (mr == "original") res_cap = batchpress::ResolutionCap::Original;
+
+    // Collect video paths
+    std::vector<batchpress::fs::path> video_paths;
+    auto add_video = [&](const batchpress::fs::directory_entry& e) {
+        static const std::vector<std::string> video_exts = {
+            ".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".flv",
+            ".m4v", ".3gp", ".ts", ".mts", ".m2ts"
+        };
+        std::string ext = e.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        for (const auto& ve : video_exts)
+            if (ext == ve && e.is_regular_file()) { video_paths.push_back(e.path()); return; }
+    };
+
+    std::string root = JSTR(env, j_root_dir);
+    if (j_recursive) {
+        for (const auto& e : batchpress::fs::recursive_directory_iterator(
+                batchpress::fs::path(root),
+                batchpress::fs::directory_options::skip_permission_denied))
+            add_video(e);
+    } else {
+        for (const auto& e : batchpress::fs::directory_iterator(root))
+            add_video(e);
+    }
+
+    // Read metadata for each video
+    std::vector<batchpress::FileItem> items;
+    items.reserve(video_paths.size());
+
+    auto caps = batchpress::probe_codec_caps();
+    batchpress::VideoCodec vc = (JSTR(env, j_vcodec) == "h265") ? batchpress::VideoCodec::H265
+                                : (JSTR(env, j_vcodec) == "h264") ? batchpress::VideoCodec::H264
+                                : (JSTR(env, j_vcodec) == "vp9")   ? batchpress::VideoCodec::VP9
+                                : caps.best_video();
+
+    double crf_factor = (vc == batchpress::VideoCodec::H265) ? 0.40
+                      : (vc == batchpress::VideoCodec::VP9)  ? 0.45
+                      : 0.55;
+
+    int crf = (j_crf >= 0) ? j_crf : (vc == batchpress::VideoCodec::H265) ? 28
+              : (vc == batchpress::VideoCodec::H264) ? 26 : 33;
+
+    std::string codec_str;
+    if      (vc == batchpress::VideoCodec::H265) codec_str = "H.265";
+    else if (vc == batchpress::VideoCodec::H264) codec_str = "H.264";
+    else if (vc == batchpress::VideoCodec::VP9)  codec_str = "VP9";
+    else codec_str = "auto";
+
+    uint32_t total = static_cast<uint32_t>(video_paths.size());
+    uint32_t done = 0;
+
+    for (const auto& vp : video_paths) {
+        try {
+            batchpress::VideoMeta vm = batchpress::read_video_meta(vp);
+
+            batchpress::FileItem fi;
+            fi.type = batchpress::FileItem::Type::Video;
+            fi.path = vp;
+            fi.filename = vp.filename().string();
+            fi.file_size = vm.file_bytes;
+            fi.width = static_cast<uint32_t>(vm.width);
+            fi.height = static_cast<uint32_t>(vm.height);
+
+            // Timestamps
+            try {
+                fi.last_modified = batchpress::fs::last_write_time(vp);
+                fi.creation_time = fi.last_modified;
+                fi.last_access = fi.last_modified;
+            } catch (...) {}
+
+            // Projected resolution
+            uint32_t proj_w = static_cast<uint32_t>(vm.width);
+            uint32_t proj_h = static_cast<uint32_t>(vm.height);
+            if (res_cap == batchpress::ResolutionCap::Cap1080p && vm.height > 1080) {
+                double scale = 1080.0 / vm.height;
+                proj_w = static_cast<uint32_t>(vm.width * scale + 0.5);
+                proj_h = 1080;
+            } else if (res_cap == batchpress::ResolutionCap::Cap4K && vm.height > 2160) {
+                double scale = 2160.0 / vm.height;
+                proj_w = static_cast<uint32_t>(vm.width * scale + 0.5);
+                proj_h = 2160;
+            }
+
+            // Projected size and quality
+            double crf_f = crf_factor;
+            uint64_t proj_size = static_cast<uint64_t>(vm.file_bytes * crf_f);
+            double savings_pct = 100.0 * (1.0 - crf_f);
+
+            batchpress::QualityEstimate q = batchpress::QualityEstimate::High;
+            if (savings_pct > 70.0) q = batchpress::QualityEstimate::Low;
+            else if (savings_pct > 40.0) q = batchpress::QualityEstimate::Medium;
+
+            batchpress::VideoFileInfo vi;
+            vi.duration_sec = vm.duration_sec;
+            vi.video_codec = vm.video_codec_name;
+            vi.audio_codec = vm.audio_codec_name;
+            vi.container = vm.container_name;
+            vi.suggested_codec = codec_str + " CRF" + std::to_string(crf);
+            vi.quality = q;
+            vi.projected_width = proj_w;
+            vi.projected_height = proj_h;
+
+            fi.projected_size = proj_size;
+            fi.savings_pct = savings_pct;
+            fi.meta = std::move(vi);
+            items.push_back(std::move(fi));
+
+            // Progress callback
+            if (j_listener) {
+                ++done;
+                jobject g_listener = env->NewGlobalRef(j_listener);
+                jclass lc = env->GetObjectClass(j_listener);
+                jmethodID mid = env->GetMethodID(lc, "onScanProgress", "(Ljava/lang/String;II)V");
+                if (mid) {
+                    JNIEnv* cb_env = nullptr;
+                    bool attached = false;
+                    if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+                        g_jvm->AttachCurrentThread(&cb_env, nullptr);
+                        attached = true;
+                    }
+                    if (cb_env) {
+                        jstring p = cb_env->NewStringUTF(vp.filename().string().c_str());
+                        cb_env->CallVoidMethod(g_listener, mid, p, static_cast<jint>(done), static_cast<jint>(total));
+                        cb_env->DeleteLocalRef(p);
+                    }
+                    if (attached) g_jvm->DetachCurrentThread();
+                }
+                env->DeleteGlobalRef(g_listener);
+            }
+        } catch (...) {
+            // Skip unreadable videos
+        }
+    }
+
+    // Build FileScanReport
+    jclass fi_cls = env->FindClass("com/batchpress/FileItem");
+    jmethodID fi_ctor = env->GetMethodID(fi_cls, "<init>",
+        "(ZLjava/lang/String;Ljava/lang/String;JJJIIJJ"
+        "Ljava/lang/String;Ljava/lang/String;"
+        "DLjava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+        "Ljava/lang/String;IIIIVI)V");
+
+    jobjectArray arr = env->NewObjectArray(static_cast<jsize>(items.size()), fi_cls, nullptr);
+
+    for (size_t i = 0; i < items.size(); ++i) {
+        const auto& f = items[i];
+        const auto& vi = f.video_info();
+
+        jstring j_path   = env->NewStringUTF(f.path.string().c_str());
+        jstring j_fname  = env->NewStringUTF(f.filename.c_str());
+        jstring j_fmt    = env->NewStringUTF(vi.container.c_str());
+        jstring j_codec  = env->NewStringUTF(vi.suggested_codec.c_str());
+        jstring j_vcodec = env->NewStringUTF(vi.video_codec.c_str());
+        jstring j_acodec = env->NewStringUTF(vi.audio_codec.c_str());
+        jstring j_q      = env->NewStringUTF(batchpress::quality_label(vi.quality));
+
+        jobject item = env->NewObject(fi_cls, fi_ctor,
+            JNI_TRUE, j_path, j_fname,
+            static_cast<jlong>(0), static_cast<jlong>(0), static_cast<jlong>(0),
+            static_cast<jint>(f.width), static_cast<jint>(f.height),
+            static_cast<jlong>(f.file_size), static_cast<jlong>(f.projected_size),
+            static_cast<jdouble>(f.savings_pct),
+            j_fmt, j_codec,
+            static_cast<jdouble>(vi.duration_sec),
+            j_vcodec, j_acodec, j_path,
+            j_q, static_cast<jint>(batchpress::quality_stars(vi.quality)),
+            static_cast<jint>(vi.projected_width), static_cast<jint>(vi.projected_height));
+
+        env->SetObjectArrayElement(arr, static_cast<jsize>(i), item);
+        env->DeleteLocalRef(j_path);
+        env->DeleteLocalRef(j_fname);
+        env->DeleteLocalRef(j_fmt);
+        env->DeleteLocalRef(j_codec);
+        env->DeleteLocalRef(j_vcodec);
+        env->DeleteLocalRef(j_acodec);
+        env->DeleteLocalRef(j_q);
+        env->DeleteLocalRef(item);
+    }
+
+    double elapsed = 0;  // could measure if needed
+    double total_s = 0, total_proj = 0;
+    for (auto& f : items) { total_s += f.file_size; total_proj += f.projected_size; }
+    double savings = (total_s > 0) ? 100.0 * (1.0 - total_proj / total_s) : 0.0;
+
+    jclass report_cls = env->FindClass("com/batchpress/FileScanReport");
+    jmethodID r_ctor = env->GetMethodID(report_cls, "<init>", "([Ljava/lang/Object;DDDII)V");
+    return env->NewObject(report_cls, r_ctor, arr,
+        static_cast<jdouble>(elapsed), static_cast<jdouble>(savings),
+        static_cast<jdouble>(total_s), static_cast<jint>(0), static_cast<jint>(items.size()));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  UTILITY — diskFreeBytes()
 // ══════════════════════════════════════════════════════════════════════════════
 

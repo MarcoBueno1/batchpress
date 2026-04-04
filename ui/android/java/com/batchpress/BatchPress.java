@@ -531,8 +531,30 @@ public class BatchPress {
     );
 
     /**
+     * Scans all video files and returns per-file metadata
+     * with projected compression savings.
+     *
+     * Use this to let the user pick which videos to process.
+     *
+     * @param vcodec    "h265" | "h264" | "vp9" | "auto"
+     * @param crf       Quality: -1 = auto (H265=28, H264=26, VP9=33)
+     * @param maxRes    "1080p" | "4k" | "original"
+     * @param audioBps  Audio bitrate in kbps, -1 = auto
+     */
+    public static native FileScanReport scanVideoFiles(
+        String                rootDir,
+        boolean               recursive,
+        String                vcodec,
+        int                   crf,
+        String                maxRes,
+        int                   audioBps,
+        int                   threads,
+        ScanProgressListener  listener
+    );
+
+    /**
      * Legacy: per-directory video scan.
-     * For per-file scanning, prefer scanFiles().
+     * For per-file scanning, prefer scanVideoFiles().
      */
     public static native VideoScanSummary runVideoScan(
         String               rootDir,
