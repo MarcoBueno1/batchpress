@@ -30,6 +30,10 @@
 #include "batchpress/scanner.hpp"
 #include "batchpress/thread_pool.hpp"
 
+#ifdef BATCHPRESS_HAS_WEBP
+#include <webp/encode.h>
+#endif
+
 // ── stb single-file libraries ─────────────────────────────────────────────────
 // STB_IMAGE_STATIC gives all stb symbols internal linkage — no conflicts
 // when stb is included in multiple translation units.
@@ -330,6 +334,43 @@ static uint64_t encode_sample(const ImageMeta& meta,
     else if (ext == ".bmp")
         ok = stbi_write_bmp_to_func(scan_write_cb, &buf,
                                     dst_w, dst_h, ch, write_px);
+#ifdef BATCHPRESS_HAS_WEBP
+    else if (ext == ".webp") {
+        // WebP requires RGBA (4 channels) — convert if needed
+        std::vector<uint8_t> rgba;
+        const uint8_t* rgba_ptr = write_px;
+        int rgba_stride = dst_w * 4;
+
+        if (ch != 4) {
+            rgba.resize(dst_w * dst_h * 4);
+            if (ch == 3) {
+                for (int i = 0; i < dst_w * dst_h; ++i) {
+                    rgba[i*4+0] = write_px[i*3+0];
+                    rgba[i*4+1] = write_px[i*3+1];
+                    rgba[i*4+2] = write_px[i*3+2];
+                    rgba[i*4+3] = 255;
+                }
+            } else if (ch == 1) {
+                for (int i = 0; i < dst_w * dst_h; ++i) {
+                    rgba[i*4+0] = rgba[i*4+1] = rgba[i*4+2] = write_px[i];
+                    rgba[i*4+3] = 255;
+                }
+            } else {
+                return 0;  // unsupported channel count
+            }
+            rgba_ptr = rgba.data();
+        }
+
+        uint8_t* webp_out = nullptr;
+        size_t webp_size = WebPEncodeRGBA(rgba_ptr, dst_w, dst_h, rgba_stride,
+                                          static_cast<float>(candidate.quality), &webp_out);
+        if (webp_size > 0 && webp_out) {
+            buf.insert(buf.end(), webp_out, webp_out + webp_size);
+            WebPFree(webp_out);
+            ok = 1;
+        }
+    }
+#endif
     else
         ok = stbi_write_png_to_func(scan_write_cb, &buf,
                                     dst_w, dst_h, ch, write_px, dst_w * ch);

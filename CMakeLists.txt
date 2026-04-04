@@ -121,6 +121,19 @@ else()
             avcodec avformat avutil swscale swresample)
     endif()
     target_link_libraries(batchpress_core PRIVATE pthread)
+
+    # ── libwebp for WebP encoding ───────────────────────────────────────────────
+    pkg_check_modules(WEBP QUIET libwebp)
+    if(WEBP_FOUND)
+        target_include_directories(batchpress_core PRIVATE ${WEBP_INCLUDE_DIRS})
+        target_link_libraries(batchpress_core PRIVATE ${WEBP_LIBRARIES})
+        target_compile_options(batchpress_core PRIVATE ${WEBP_CFLAGS_OTHER})
+        target_compile_definitions(batchpress_core PRIVATE BATCHPRESS_HAS_WEBP)
+        message(STATUS "WebP support enabled (libwebp ${WEBP_VERSION})")
+    else()
+        message(WARNING "libwebp not found — WebP encoding will fall back to PNG. "
+                        "Install: sudo apt install libwebp-dev")
+    endif()
 endif()
 
 # ══════════════════════════════════════════════════════════════════════════════

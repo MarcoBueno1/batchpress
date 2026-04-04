@@ -34,6 +34,10 @@
 #include "batchpress/thread_pool.hpp"
 #include "sha256.hpp"  // Shared streaming SHA-256
 
+#ifdef BATCHPRESS_HAS_WEBP
+#include <webp/encode.h>
+#endif
+
 // ── stb single-file libraries ─────────────────────────────────────────────────
 // STB_IMAGE_STATIC makes all stb symbols have internal linkage (static).
 // This allows including stb in multiple translation units without linker
@@ -122,6 +126,38 @@ static std::vector<uint8_t> encode_to_memory(
     if      (ext==".jpg"||ext==".jpeg") ok=stbi_write_jpg_to_func(stb_write_cb,&buf,w,h,ch,pixels,quality);
     else if (ext==".png")               ok=stbi_write_png_to_func(stb_write_cb,&buf,w,h,ch,pixels,w*ch);
     else if (ext==".bmp")               ok=stbi_write_bmp_to_func(stb_write_cb,&buf,w,h,ch,pixels);
+#ifdef BATCHPRESS_HAS_WEBP
+    else if (ext==".webp") {
+        // WebP requires RGBA (4 channels)
+        std::vector<uint8_t> rgba;
+        rgba.resize(w * h * 4);
+        if (ch == 4) {
+            std::memcpy(rgba.data(), pixels, w * h * 4);
+        } else if (ch == 3) {
+            for (int i = 0; i < w * h; ++i) {
+                rgba[i*4+0] = pixels[i*3+0];
+                rgba[i*4+1] = pixels[i*3+1];
+                rgba[i*4+2] = pixels[i*3+2];
+                rgba[i*4+3] = 255;
+            }
+        } else if (ch == 1) {
+            for (int i = 0; i < w * h; ++i) {
+                rgba[i*4+0] = rgba[i*4+1] = rgba[i*4+2] = pixels[i];
+                rgba[i*4+3] = 255;
+            }
+        } else {
+            return buf;  // unsupported
+        }
+        uint8_t* webp_out = nullptr;
+        size_t webp_size = WebPEncodeRGBA(rgba.data(), w, h, w * 4,
+                                          static_cast<float>(quality), &webp_out);
+        if (webp_size > 0 && webp_out) {
+            buf.insert(buf.end(), webp_out, webp_out + webp_size);
+            WebPFree(webp_out);
+            ok = 1;
+        }
+    }
+#endif
     else                                ok=stbi_write_png_to_func(stb_write_cb,&buf,w,h,ch,pixels,w*ch);
     if (!ok || buf.empty())
         throw std::runtime_error("encode_to_memory failed for ext: " + ext);
