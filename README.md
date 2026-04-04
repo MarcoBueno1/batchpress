@@ -292,11 +292,11 @@ background thread (Kotlin coroutine, ExecutorService, RxJava).
 import com.batchpress.*
 
 viewModelScope.launch(Dispatchers.IO) {
-    // 1. Scan all files with per-file projections
-    val scan = BatchPress.scanFiles(
-        rootDir   = "/sdcard/DCIM",
+    // 1. Scan images with per-file projections
+    val imgScan = BatchPress.scanFiles(
+        rootDir   = "/sdcard/DCIM/Camera",
         recursive = true,
-        samples   = 5,           // 0 = full encode (slowest, most accurate)
+        samples   = 5,
         threads   = 0,
         listener  = object : BatchPress.ScanProgressListener {
             override fun onProgress(name: String, done: Int, total: Int) {
@@ -305,16 +305,34 @@ viewModelScope.launch(Dispatchers.IO) {
         }
     )
 
-    println("Found: ${scan.imageCount} images, ${scan.videoCount} videos")
-    println("Overall savings: ${scan.overallSavingsPct}%")
+    // 2. Scan videos with per-file projections
+    val vidScan = BatchPress.scanVideoFiles(
+        rootDir   = "/sdcard/DCIM/Camera",
+        recursive = true,
+        vcodec    = "h265",
+        crf       = 28,           // -1 = auto
+        maxRes    = "1080p",
+        audioBps  = -1,           // auto
+        threads   = 0,
+        listener  = object : BatchPress.ScanProgressListener {
+            override fun onProgress(name: String, done: Int, total: Int) {
+                // update progress
+            }
+        }
+    )
 
-    // 2. Filter — only files with >40% savings
-    val selected = scan.files.filter { it.savingsPct > 40.0 }
+    // 3. Filter — only files with good quality and savings
+    val imgSelected = imgScan.files.filter {
+        it.savingsPct > 40.0 && it.qualityStars >= 3
+    }
+    val vidSelected = vidScan.files.filter {
+        it.savingsPct > 50.0 && it.qualityStars >= 3
+    }
 
-    // 3. Process selected images
+    // 4. Process selected images
     val imgResult = BatchPress.processFiles(
-        files     = selected.toTypedArray(),
-        inputDir  = "/sdcard/DCIM",
+        files     = imgSelected.toTypedArray(),
+        inputDir  = "/sdcard/DCIM/Camera",
         outputDir = "",              // empty = in-place
         resize    = "fit:1920x1080",
         format    = "webp",
@@ -331,15 +349,15 @@ viewModelScope.launch(Dispatchers.IO) {
         }
     )
 
-    // 4. Process selected videos
+    // 5. Process selected videos
     val vidResult = BatchPress.processVideoFiles(
-        files       = selected.toTypedArray(),
-        inputDir    = "/sdcard/DCIM",
+        files       = vidSelected.toTypedArray(),
+        inputDir    = "/sdcard/DCIM/Camera",
         outputDir   = "",
         vcodec      = "h265",
-        crf         = 28,           // -1 = auto
+        crf         = 28,
         maxRes      = "1080p",
-        audioBps    = -1,           // auto (48kbps speech, 96kbps music)
+        audioBps    = -1,
         threads     = 0,
         dryRun      = false,
         dedup       = true,
@@ -403,12 +421,29 @@ println("Suggested codec: ${vidSummary.suggestedCodec} CRF${vidSummary.suggested
 
 | Class | Purpose |
 |-------|---------|
-| `FileItem` | Per-file metadata: path, type, dimensions, size, projected savings |
-| `FileScanReport` | scanFiles() result: FileItem[], counts, totals |
+| `FileItem` | Per-file metadata: path, type, dimensions, size, projected savings, **quality**, **projected resolution** |
+| `FileScanReport` | scanFiles() / scanVideoFiles() result: FileItem[], counts, totals |
 | `BatchResult` | Image batch result: total, succeeded, failed, bytes saved |
 | `VideoBatchResult` | Video batch result: codec usage breakdown, bytes saved |
 | `ScanSummary` | Legacy per-directory image scan summary |
 | `VideoScanSummary` | Legacy per-directory video scan summary |
+
+### FileItem fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | String | Absolute file path |
+| `filename` | String | File name only |
+| `width`, `height` | int | Original resolution |
+| `fileSize` | long | Original file size in bytes |
+| `projectedSize` | long | Estimated size after compression |
+| `savingsPct` | double | Estimated savings percentage (0-100) |
+| `qualityLabel` | String | "Lossless", "High", "Medium", "Low" |
+| `qualityStars` | int | 1-5 star rating |
+| `projectedWidth`, `projectedHeight` | int | Output resolution (0 = same as original) |
+| `durationSec` | double | Video duration (0 for images) |
+| `videoCodec`, `audioCodec` | String | Current codec names (videos only) |
+| `suggestedCodec` | String | e.g. "WebP q85 fit:1920x1080" or "H.265 CRF28" |
 
 ---
 
