@@ -709,6 +709,9 @@ FileScanReport scan_files(const ScanConfig& cfg) {
             uint64_t best_projected = meta.file_bytes;
             double best_savings = 0.0;
             std::string best_codec;
+            bool best_has_resize = false;
+            int best_quality = 90;
+            ImageFormat best_fmt = ImageFormat::Same;
 
             for (const auto& cand : candidates) {
                 uint64_t encoded = encode_sample(meta, cand);
@@ -723,6 +726,9 @@ FileScanReport scan_files(const ScanConfig& cfg) {
                         best_projected = projected;
                         best_savings = savings;
                         best_codec = cand.label();
+                        best_has_resize = cand.resize.active();
+                        best_quality = cand.quality;
+                        best_fmt = cand.format;
                     }
                 }
 
@@ -735,10 +741,24 @@ FileScanReport scan_files(const ScanConfig& cfg) {
 
             // If no candidate produced a valid projection, estimate with a default ratio
             if (best_projected == meta.file_bytes && meta.file_bytes > 0) {
-                // Default estimate: ~40% savings for images
                 best_projected = static_cast<uint64_t>(
                     static_cast<double>(meta.file_bytes) * 0.6);
                 best_savings = 40.0;
+                best_quality = 85;
+                best_fmt = ImageFormat::WebP;
+            }
+
+            // Estimate quality level based on compression config
+            if (best_fmt == ImageFormat::PNG && !best_has_resize) {
+                img_info.quality = QualityEstimate::Lossless;
+            } else if (best_savings < 20.0) {
+                img_info.quality = QualityEstimate::NearLossless;
+            } else if (best_savings < 50.0 && !best_has_resize) {
+                img_info.quality = QualityEstimate::High;
+            } else if (best_savings < 75.0) {
+                img_info.quality = QualityEstimate::Medium;
+            } else {
+                img_info.quality = QualityEstimate::Low;
             }
 
             fi.projected_size = best_projected;

@@ -53,6 +53,30 @@ void batchpress::HashCache::clear() {
 
 namespace batchpress {
 
+// ── QualityEstimate helpers ───────────────────────────────────────────────────
+
+const char* quality_label(QualityEstimate q) {
+    switch (q) {
+        case QualityEstimate::Lossless:     return "Lossless";
+        case QualityEstimate::NearLossless: return "Near-Lossless";
+        case QualityEstimate::High:         return "High";
+        case QualityEstimate::Medium:       return "Medium";
+        case QualityEstimate::Low:          return "Low";
+    }
+    return "Unknown";
+}
+
+int quality_stars(QualityEstimate q) {
+    switch (q) {
+        case QualityEstimate::Lossless:     return 5;
+        case QualityEstimate::NearLossless: return 5;
+        case QualityEstimate::High:         return 4;
+        case QualityEstimate::Medium:       return 3;
+        case QualityEstimate::Low:          return 2;
+    }
+    return 1;
+}
+
 // ── ImageFormat ───────────────────────────────────────────────────────────────
 
 ImageFormat parse_format(const std::string& raw) {

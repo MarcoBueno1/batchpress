@@ -175,11 +175,35 @@ struct BATCHPRESS_API Config {
 // ── File Item for selective processing ────────────────────────────────────────
 
 /**
+ * @brief Estimated quality level after compression.
+ *
+ * Lossless      — pixel-perfect (PNG, no resize)
+ * NearLossless  — visually identical, tiny differences (WebP q95+)
+ * High          — excellent for archival, minor differences (WebP q85-90)
+ * Medium        — good for everyday use, visible on close inspection (WebP q60-75)
+ * Low           — noticeable artifacts, maximum compression (WebP q40-50)
+ */
+enum class BATCHPRESS_API QualityEstimate {
+    Lossless,       ///< Pixel-perfect (PNG, no resize)
+    NearLossless,   ///< Visually identical (<0.1% pixel difference)
+    High,           ///< Excellent quality, minor differences
+    Medium,         ///< Good for everyday use
+    Low             ///< Noticeable artifacts, maximum compression
+};
+
+/// Human-readable label for quality level
+BATCHPRESS_API const char* quality_label(QualityEstimate q);
+
+/// Star rating for quality (1-5 stars)
+BATCHPRESS_API int quality_stars(QualityEstimate q);
+
+/**
  * @brief Image-specific metadata for FileItem.
  */
 struct BATCHPRESS_API ImageFileInfo {
     std::string format;              ///< e.g. "JPEG", "PNG", "WebP"
     std::string suggested_codec;     ///< e.g. "WebP q85 fit:1920x1080"
+    QualityEstimate quality = QualityEstimate::High;  ///< Estimated quality after compression
 };
 
 /**
@@ -191,6 +215,7 @@ struct BATCHPRESS_API VideoFileInfo {
     std::string audio_codec;         ///< Current audio codec name (e.g. "aac")
     std::string container;           ///< Container format (e.g. "mp4")
     std::string suggested_codec;     ///< e.g. "H.265 CRF28"
+    QualityEstimate quality = QualityEstimate::High;  ///< Estimated quality after compression
 };
 
 /**

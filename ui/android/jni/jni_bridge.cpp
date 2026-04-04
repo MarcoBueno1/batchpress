@@ -282,7 +282,8 @@ Java_com_batchpress_BatchPress_scanFiles(
     jmethodID fi_ctor = env->GetMethodID(fi_cls, "<init>",
         "(ZLjava/lang/String;Ljava/lang/String;JJJIIJJ"
         "Ljava/lang/String;Ljava/lang/String;"
-        "DLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+        "DLjava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+        "Ljava/lang/String;I)V");
 
     jobjectArray arr = env->NewObjectArray(
         static_cast<jsize>(report.files.size()), fi_cls, nullptr);
@@ -290,6 +291,15 @@ Java_com_batchpress_BatchPress_scanFiles(
     for (size_t i = 0; i < report.files.size(); ++i) {
         const auto& f = report.files[i];
         bool is_video = (f.type == batchpress::FileItem::Type::Video);
+
+        // Get quality info
+        batchpress::QualityEstimate q;
+        if (is_video)
+            q = f.video_info().quality;
+        else
+            q = f.image_info().quality;
+        const char* qlabel = batchpress::quality_label(q);
+        int qstars = batchpress::quality_stars(q);
 
         jstring j_path      = env->NewStringUTF(f.path.string().c_str());
         jstring j_fname     = env->NewStringUTF(f.filename.c_str());
@@ -300,13 +310,14 @@ Java_com_batchpress_BatchPress_scanFiles(
                      : f.image_info().suggested_codec.c_str());
         jstring j_vcodec    = is_video ? env->NewStringUTF(f.video_info().video_codec.c_str()) : nullptr;
         jstring j_acodec    = is_video ? env->NewStringUTF(f.video_info().audio_codec.c_str()) : nullptr;
+        jstring j_qlabel    = env->NewStringUTF(qlabel);
 
         jobject item = env->NewObject(fi_cls, fi_ctor,
             static_cast<jboolean>(is_video),
             j_path, j_fname,
-            static_cast<jlong>(0),   // creation_time (not portable)
+            static_cast<jlong>(0),   // creation_time
             static_cast<jlong>(0),   // last_access
-            static_cast<jlong>(0),   // last_modified (could add conversion)
+            static_cast<jlong>(0),   // last_modified
             static_cast<jint>(f.width),
             static_cast<jint>(f.height),
             static_cast<jlong>(f.file_size),
@@ -315,8 +326,8 @@ Java_com_batchpress_BatchPress_scanFiles(
             j_fmt, j_codec,
             static_cast<jdouble>(is_video ? f.video_info().duration_sec : 0.0),
             j_vcodec, j_acodec,
-            j_path  // return path as display hint
-        );
+            j_path,  // display hint
+            j_qlabel, static_cast<jint>(qstars));
 
         env->SetObjectArrayElement(arr, static_cast<jsize>(i), item);
 
@@ -326,6 +337,7 @@ Java_com_batchpress_BatchPress_scanFiles(
         env->DeleteLocalRef(j_codec);
         if (j_vcodec) env->DeleteLocalRef(j_vcodec);
         if (j_acodec) env->DeleteLocalRef(j_acodec);
+        env->DeleteLocalRef(j_qlabel);
         env->DeleteLocalRef(item);
     }
 
@@ -387,6 +399,8 @@ Java_com_batchpress_BatchPress_processFiles(
     jfieldID f_dur    = env->GetFieldID(fi_cls, "durationSec", "D");
     jfieldID f_vcodec = env->GetFieldID(fi_cls, "videoCodec", "Ljava/lang/String;");
     jfieldID f_acodec = env->GetFieldID(fi_cls, "audioCodec", "Ljava/lang/String;");
+    jfieldID f_qlabel = env->GetFieldID(fi_cls, "qualityLabel", "Ljava/lang/String;");
+    jfieldID f_qstars = env->GetFieldID(fi_cls, "qualityStars", "I");
 
     for (jsize i = 0; i < len; ++i) {
         jobject obj = env->GetObjectArrayElement(j_files, i);
@@ -549,6 +563,8 @@ Java_com_batchpress_BatchPress_processVideoFiles(
     jfieldID f_dur    = env->GetFieldID(fi_cls, "durationSec", "D");
     jfieldID f_vcodec = env->GetFieldID(fi_cls, "videoCodec", "Ljava/lang/String;");
     jfieldID f_acodec = env->GetFieldID(fi_cls, "audioCodec", "Ljava/lang/String;");
+    jfieldID f_qlabel = env->GetFieldID(fi_cls, "qualityLabel", "Ljava/lang/String;");
+    jfieldID f_qstars = env->GetFieldID(fi_cls, "qualityStars", "I");
 
     for (jsize i = 0; i < len; ++i) {
         jobject obj = env->GetObjectArrayElement(j_files, i);

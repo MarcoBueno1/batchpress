@@ -280,7 +280,7 @@ static void render_ui(const SelectState& state) {
     term_goto(header_row, 54);
     std::cout << "Gain%";
     term_goto(header_row, 64);
-    std::cout << "Type";
+    std::cout << "Quality";
     term_reset_color();
 
     // ── File list ─────────────────────────────────────────────────────────
@@ -350,15 +350,26 @@ static void render_ui(const SelectState& state) {
                   << fi.savings_pct << "%";
         term_reset_color();
 
-        // Type
+        // Quality estimate
         term_goto(row, 64);
-        if (fi.type == batchpress::FileItem::Type::Image) {
-            term_color("35");  // magenta
-            std::cout << "IMG";
-        } else {
-            term_color("36");  // cyan
-            std::cout << "VID";
-        }
+        auto get_quality = [](const batchpress::FileItem& f) -> batchpress::QualityEstimate {
+            if (f.type == batchpress::FileItem::Type::Image)
+                return f.image_info().quality;
+            return f.video_info().quality;
+        };
+        auto q = get_quality(fi);
+        int stars = batchpress::quality_stars(q);
+        const char* label = batchpress::quality_label(q);
+
+        // Color by quality
+        if (stars >= 5) term_color("32");       // green
+        else if (stars >= 4) term_color("36");   // cyan
+        else if (stars >= 3) term_color("33");   // yellow
+        else term_color("31");                    // red
+
+        for (int s = 0; s < stars; ++s) std::cout << "★";
+        for (int s = stars; s < 5; ++s) std::cout << "☆";
+        std::cout << " " << label;
         term_reset_color();
 
         if (is_cursor) term_reset_color();
