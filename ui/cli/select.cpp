@@ -275,11 +275,13 @@ static void render_ui(const SelectState& state) {
     term_goto(header_row, 1);
     term_color("1;37");  // bold white
     std::cout << "  [ ] File";
-    term_goto(header_row, 42);
-    std::cout << "Size";
-    term_goto(header_row, 54);
-    std::cout << "Gain%";
+    term_goto(header_row, 50);
+    std::cout << "Resolution";
     term_goto(header_row, 64);
+    std::cout << "Size";
+    term_goto(header_row, 76);
+    std::cout << "Gain%";
+    term_goto(header_row, 86);
     std::cout << "Quality";
     term_reset_color();
 
@@ -323,24 +325,24 @@ static void render_ui(const SelectState& state) {
         std::cout << (is_sel ? "[✓]" : "[ ]");
         term_reset_color();
 
-        // Filename (truncated)
+        // Filename (full, never truncated)
         std::string fname = fi.filename;
-        int name_max = 30;
-        if ((int)fname.length() > name_max) {
-            fname = fname.substr(0, name_max - 3) + "...";
-        }
 
         if (is_cursor) term_color("1;37");  // bold white for cursor
 
         term_goto(row, 6);
         std::cout << fname;
 
+        // Resolution
+        term_goto(row, 50);
+        std::cout << fi.width << "x" << fi.height;
+
         // Size
-        term_goto(row, 42);
+        term_goto(row, 64);
         std::cout << fmt_bytes(fi.file_size);
 
         // Savings
-        term_goto(row, 54);
+        term_goto(row, 76);
         if (fi.savings_pct > 0) {
             if (fi.savings_pct >= 60) term_color("32");       // green
             else if (fi.savings_pct >= 30) term_color("33");   // yellow
@@ -351,7 +353,7 @@ static void render_ui(const SelectState& state) {
         term_reset_color();
 
         // Quality estimate
-        term_goto(row, 64);
+        term_goto(row, 86);
         auto get_quality = [](const batchpress::FileItem& f) -> batchpress::QualityEstimate {
             if (f.type == batchpress::FileItem::Type::Image)
                 return f.image_info().quality;
@@ -359,7 +361,7 @@ static void render_ui(const SelectState& state) {
         };
         auto q = get_quality(fi);
         int stars = batchpress::quality_stars(q);
-        const char* label = batchpress::quality_label(q);
+        (void)batchpress::quality_label(q);  // available for future use
 
         // Color by quality
         if (stars >= 5) term_color("32");       // green
@@ -369,7 +371,6 @@ static void render_ui(const SelectState& state) {
 
         for (int s = 0; s < stars; ++s) std::cout << "★";
         for (int s = stars; s < 5; ++s) std::cout << "☆";
-        std::cout << " " << label;
         term_reset_color();
 
         if (is_cursor) term_reset_color();
