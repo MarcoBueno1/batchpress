@@ -260,8 +260,10 @@ public class BatchPress {
         public final String  videoCodec;
         public final String  audioCodec;
         public final String  displayHint;
-        public final String  qualityLabel;    // "Lossless", "High", "Medium", etc.
-        public final int     qualityStars;    // 1-5
+        public final String  qualityLabel;
+        public final int     qualityStars;
+        public final int     projectedWidth;   // 0 = same as original
+        public final int     projectedHeight;  // 0 = same as original
 
         public FileItem(
             boolean isVideo,
@@ -282,7 +284,9 @@ public class BatchPress {
             String  audioCodec,
             String  displayHint,
             String  qualityLabel,
-            int     qualityStars)
+            int     qualityStars,
+            int     projectedWidth,
+            int     projectedHeight)
         {
             this.isVideo       = isVideo;
             this.path          = path;
@@ -303,6 +307,8 @@ public class BatchPress {
             this.displayHint   = displayHint;
             this.qualityLabel  = qualityLabel;
             this.qualityStars  = qualityStars;
+            this.projectedWidth  = projectedWidth;
+            this.projectedHeight = projectedHeight;
         }
 
         public long bytesSaved() {

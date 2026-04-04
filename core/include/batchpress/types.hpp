@@ -204,6 +204,8 @@ struct BATCHPRESS_API ImageFileInfo {
     std::string format;              ///< e.g. "JPEG", "PNG", "WebP"
     std::string suggested_codec;     ///< e.g. "WebP q85 fit:1920x1080"
     QualityEstimate quality = QualityEstimate::High;  ///< Estimated quality after compression
+    uint32_t projected_width  = 0;   ///< Output width after suggested resize (0 = same as input)
+    uint32_t projected_height = 0;   ///< Output height after suggested resize (0 = same as input)
 };
 
 /**
@@ -216,6 +218,8 @@ struct BATCHPRESS_API VideoFileInfo {
     std::string container;           ///< Container format (e.g. "mp4")
     std::string suggested_codec;     ///< e.g. "H.265 CRF28"
     QualityEstimate quality = QualityEstimate::High;  ///< Estimated quality after compression
+    uint32_t projected_width  = 0;   ///< Output width after resolution cap (0 = same)
+    uint32_t projected_height = 0;   ///< Output height after resolution cap (0 = same)
 };
 
 /**

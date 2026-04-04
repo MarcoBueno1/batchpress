@@ -761,6 +761,22 @@ FileScanReport scan_files(const ScanConfig& cfg) {
                 img_info.quality = QualityEstimate::Low;
             }
 
+            // Compute projected dimensions
+            uint32_t proj_w = meta.width;
+            uint32_t proj_h = meta.height;
+            // We need to recompute the resize from the best candidate
+            // The best candidate was determined during the loop above
+            // For simplicity, we estimate based on savings ratio + resize flag
+            if (best_has_resize) {
+                // The scan found a resize config; use the savings ratio as proxy
+                // This is approximate — the actual resize is applied during processing
+                double scale = std::sqrt(static_cast<double>(best_projected) / meta.file_bytes);
+                proj_w = std::max(1u, static_cast<uint32_t>(meta.width * scale + 0.5));
+                proj_h = std::max(1u, static_cast<uint32_t>(meta.height * scale + 0.5));
+            }
+            img_info.projected_width  = proj_w;
+            img_info.projected_height = proj_h;
+
             fi.projected_size = best_projected;
             fi.savings_pct = best_savings;
             img_info.suggested_codec = best_codec;

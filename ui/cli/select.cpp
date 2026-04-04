@@ -276,12 +276,14 @@ static void render_ui(const SelectState& state) {
     term_color("1;37");  // bold white
     std::cout << "  [ ] File";
     term_goto(header_row, 50);
-    std::cout << "Resolution";
-    term_goto(header_row, 64);
-    std::cout << "Size";
+    std::cout << "Original";
+    term_goto(header_row, 62);
+    std::cout << "Output";
     term_goto(header_row, 76);
+    std::cout << "Size";
+    term_goto(header_row, 88);
     std::cout << "Gain%";
-    term_goto(header_row, 86);
+    term_goto(header_row, 98);
     std::cout << "Quality";
     term_reset_color();
 
@@ -333,16 +335,34 @@ static void render_ui(const SelectState& state) {
         term_goto(row, 6);
         std::cout << fname;
 
-        // Resolution
+        // Original resolution
         term_goto(row, 50);
         std::cout << fi.width << "x" << fi.height;
 
+        // Projected resolution
+        term_goto(row, 62);
+        auto get_proj = [](const batchpress::FileItem& f) -> std::pair<uint32_t, uint32_t> {
+            if (f.type == batchpress::FileItem::Type::Image)
+                return {f.image_info().projected_width, f.image_info().projected_height};
+            return {f.video_info().projected_width, f.video_info().projected_height};
+        };
+        auto [pw, ph] = get_proj(fi);
+        if (pw > 0 && ph > 0 && (pw != fi.width || ph != fi.height)) {
+            term_color("33");  // yellow to indicate change
+            std::cout << pw << "x" << ph;
+            term_reset_color();
+        } else {
+            term_color("90");
+            std::cout << "same";
+            term_reset_color();
+        }
+
         // Size
-        term_goto(row, 64);
+        term_goto(row, 76);
         std::cout << fmt_bytes(fi.file_size);
 
         // Savings
-        term_goto(row, 76);
+        term_goto(row, 88);
         if (fi.savings_pct > 0) {
             if (fi.savings_pct >= 60) term_color("32");       // green
             else if (fi.savings_pct >= 30) term_color("33");   // yellow
@@ -353,7 +373,7 @@ static void render_ui(const SelectState& state) {
         term_reset_color();
 
         // Quality estimate
-        term_goto(row, 86);
+        term_goto(row, 98);
         auto get_quality = [](const batchpress::FileItem& f) -> batchpress::QualityEstimate {
             if (f.type == batchpress::FileItem::Type::Image)
                 return f.image_info().quality;

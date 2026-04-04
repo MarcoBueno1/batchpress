@@ -283,7 +283,7 @@ Java_com_batchpress_BatchPress_scanFiles(
         "(ZLjava/lang/String;Ljava/lang/String;JJJIIJJ"
         "Ljava/lang/String;Ljava/lang/String;"
         "DLjava/lang/String;Ljava/lang/String;Ljava/lang/String;"
-        "Ljava/lang/String;I)V");
+        "Ljava/lang/String;IIIIVI)V");
 
     jobjectArray arr = env->NewObjectArray(
         static_cast<jsize>(report.files.size()), fi_cls, nullptr);
@@ -300,6 +300,16 @@ Java_com_batchpress_BatchPress_scanFiles(
             q = f.image_info().quality;
         const char* qlabel = batchpress::quality_label(q);
         int qstars = batchpress::quality_stars(q);
+
+        // Get projected dimensions
+        uint32_t pw = 0, ph = 0;
+        if (is_video) {
+            pw = f.video_info().projected_width;
+            ph = f.video_info().projected_height;
+        } else {
+            pw = f.image_info().projected_width;
+            ph = f.image_info().projected_height;
+        }
 
         jstring j_path      = env->NewStringUTF(f.path.string().c_str());
         jstring j_fname     = env->NewStringUTF(f.filename.c_str());
@@ -327,7 +337,8 @@ Java_com_batchpress_BatchPress_scanFiles(
             static_cast<jdouble>(is_video ? f.video_info().duration_sec : 0.0),
             j_vcodec, j_acodec,
             j_path,  // display hint
-            j_qlabel, static_cast<jint>(qstars));
+            j_qlabel, static_cast<jint>(qstars),
+            static_cast<jint>(pw), static_cast<jint>(ph));
 
         env->SetObjectArrayElement(arr, static_cast<jsize>(i), item);
 
