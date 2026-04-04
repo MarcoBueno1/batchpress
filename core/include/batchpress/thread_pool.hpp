@@ -66,23 +66,48 @@ class BATCHPRESS_API ThreadPool {
 public:
     /**
      * @brief Construct a thread pool.
-     * @param num_threads  0 = auto (max 4 on Android, all cores elsewhere)
+     * @param num_threads  0 = auto (scales with cores, reserves margin for UI)
+     *
+     * Auto-sizing formula on Android:
+     *   threads = max(1, floor(cores * scale_factor))
+     *
+     * This always reserves cores - threads ≥ 1 cores for the UI thread and
+     * system tasks, preventing ANR while still utilizing available hardware.
+     *
+     * Scale factors by core count:
+     *   ≤2 cores  → cores - 1  (reserve 1 for UI)
+     *   3-6 cores → cores - 2  (reserve 2 for UI + system)
+     *   7-12 cores → floor(cores * 0.7)  (30% reserved)
+     *   13+ cores → floor(cores * 0.6)   (40% reserved, but more absolute cores)
+     *
+     * Examples:
+     *   4 cores  → 2 threads   (2 reserved for UI/system)
+     *   6 cores  → 4 threads   (2 reserved)
+     *   8 cores  → 5 threads   (3 reserved)
+     *   16 cores → 9 threads   (7 reserved)
      */
     explicit ThreadPool(size_t num_threads = 0)
         : stop_(false), cancelled_(false), active_(0), submitted_(0), completed_(0)
     {
         if (num_threads == 0) {
 #ifdef __ANDROID__
-            // On Android, limit threads to prevent ANR on UI thread.
-            // Even on 16-core devices, use at most 4 background threads
-            // so the UI thread always has CPU headroom.
-            unsigned int cores = std::thread::hardware_concurrency();
-            num_threads = std::min(cores, 4u);
+            size_t cores = std::thread::hardware_concurrency();
+            if (cores == 0) cores = 2;  // absolute fallback
+
+            if (cores <= 2) {
+                num_threads = 1;  // reserve 1 core for UI on very low-end devices
+            } else if (cores <= 6) {
+                num_threads = cores - 2;  // reserve 2 cores for UI + system
+            } else if (cores <= 12) {
+                num_threads = static_cast<size_t>(cores * 0.7);  // 30% reserved
+            } else {
+                num_threads = static_cast<size_t>(cores * 0.6);  // 40% reserved
+            }
+            if (num_threads == 0) num_threads = 1;
 #else
             num_threads = std::max(1u, std::thread::hardware_concurrency());
 #endif
         }
-        if (num_threads == 0) num_threads = 1;  // absolute fallback
 
         workers_.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i)
