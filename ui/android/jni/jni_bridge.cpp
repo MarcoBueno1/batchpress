@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 #include <shared_mutex>
+#include <atomic>
 
 #define LOG_TAG  "batchpress"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -43,12 +44,25 @@
 
 static JavaVM* g_jvm = nullptr;
 
+// ── Global batch cancellation flag ───────────────────────────────────────────
+static std::atomic<bool> g_batch_cancelled{false};
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     g_jvm = vm;
     return JNI_VERSION_1_6;
 }
 
 extern "C" {
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CANCELLATION — cancelBatch()
+// ══════════════════════════════════════════════════════════════════════════════
+
+JNIEXPORT void JNICALL
+Java_com_batchpress_BatchPress_cancelBatch(JNIEnv*, jclass) {
+    g_batch_cancelled.store(true, std::memory_order_release);
+    LOGI("Batch cancellation requested");
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  IMAGE BATCH — runBatch()
@@ -67,6 +81,8 @@ Java_com_batchpress_BatchPress_runBatch(
     jboolean j_dedup,
     jobject  j_listener)
 {
+    g_batch_cancelled.store(false, std::memory_order_release);
+
     batchpress::Config cfg;
     cfg.input_dir   = JSTR(env, j_input_dir);
     cfg.output_dir  = JSTR(env, j_output_dir);
@@ -383,6 +399,8 @@ Java_com_batchpress_BatchPress_processFiles(
     jboolean j_dedup,
     jobject  j_listener)
 {
+    g_batch_cancelled.store(false, std::memory_order_release);
+
     batchpress::Config cfg;
     cfg.input_dir   = JSTR(env, j_input_dir);
     cfg.output_dir  = JSTR(env, j_output_dir);

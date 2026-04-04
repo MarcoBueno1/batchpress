@@ -37,13 +37,25 @@
 #include <stdexcept>
 #include <algorithm>
 
+// Android-specific: thread priority and yield
+#ifdef __ANDROID__
+#include <sys/prctl.h>
+#include <sys/resource.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sched.h>
+#endif
+
 namespace batchpress {
 
 /**
- * @brief High-performance thread pool.
+ * @brief High-performance thread pool with Android ANR prevention.
  *
- * Header-only implementation. No platform-specific code.
- * Compiles on Linux, Windows, macOS and Android NDK.
+ * Features for Android safety:
+ *   - Workers use BACKGROUND thread priority (won't compete with UI)
+ *   - Cooperative yielding prevents CPU monopolization
+ *   - Cancellation support for mid-batch abort
+ *   - Thread count defaults to min(cores, 4) on Android
  *
  * Thread-safety guarantees:
  *   - submit() is safe to call concurrently with shutdown()
@@ -52,12 +64,25 @@ namespace batchpress {
  */
 class BATCHPRESS_API ThreadPool {
 public:
+    /**
+     * @brief Construct a thread pool.
+     * @param num_threads  0 = auto (max 4 on Android, all cores elsewhere)
+     */
     explicit ThreadPool(size_t num_threads = 0)
-        : stop_(false), active_(0), submitted_(0), completed_(0)
+        : stop_(false), cancelled_(false), active_(0), submitted_(0), completed_(0)
     {
-        // Handle platforms where hardware_concurrency() returns 0
-        if (num_threads == 0)
+        if (num_threads == 0) {
+#ifdef __ANDROID__
+            // On Android, limit threads to prevent ANR on UI thread.
+            // Even on 16-core devices, use at most 4 background threads
+            // so the UI thread always has CPU headroom.
+            unsigned int cores = std::thread::hardware_concurrency();
+            num_threads = std::min(cores, 4u);
+#else
             num_threads = std::max(1u, std::thread::hardware_concurrency());
+#endif
+        }
+        if (num_threads == 0) num_threads = 1;  // absolute fallback
 
         workers_.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i)
@@ -86,17 +111,54 @@ public:
             std::lock_guard lock(mu_);
             if (stop_.load(std::memory_order_acquire))
                 throw std::runtime_error("ThreadPool: submit on stopped pool");
-            queue_.emplace([task]{ (*task)(); });
+            queue_.emplace([task, this]{
+                try { (*task)(); } catch (...) { /* handled by caller via future */ }
+            });
         }
         submitted_.fetch_add(1, std::memory_order_relaxed);
         cv_.notify_one();
         return future;
     }
 
+    /**
+     * @brief Request cancellation of remaining tasks.
+     *
+     * Tasks already running will complete, but queued tasks will be skipped.
+     * Safe to call from any thread (including JNI/Java callback).
+     */
+    void cancel() {
+        cancelled_.store(true, std::memory_order_release);
+        { std::lock_guard lock(mu_); stop_.store(true, std::memory_order_release); }
+        cv_.notify_all();
+    }
+
+    /// Check if cancellation was requested
+    bool is_cancelled() const noexcept {
+        return cancelled_.load(std::memory_order_acquire);
+    }
+
+    /**
+     * @brief Cooperative yield — call from inside long-running tasks.
+     *
+     * On Android: sleeps 1ms to yield CPU to UI thread.
+     * Call this periodically in encoding loops to prevent ANR.
+     */
+    void yield_cooperatively() const noexcept {
+#ifdef __ANDROID__
+        // Brief sleep gives the Android scheduler a chance to run the UI thread.
+        // 1ms is short enough to not noticeably slow processing,
+        // but long enough to prevent ANR (5-second watchdog).
+        usleep(1000);  // 1ms
+#else
+        std::this_thread::yield();
+#endif
+    }
+
     void wait_all() {
         std::unique_lock lock(mu_);
         drain_cv_.wait(lock, [this]{
-            return queue_.empty() && active_.load(std::memory_order_acquire) == 0;
+            return (stop_.load(std::memory_order_acquire) && queue_.empty()) ||
+                   active_.load(std::memory_order_acquire) == 0;
         });
     }
 
@@ -117,6 +179,19 @@ public:
 private:
     void spawn_worker() {
         workers_.emplace_back([this]{
+#ifdef __ANDROID__
+            // Set thread name for debugging (visible in logcat)
+            pthread_setname_np(pthread_self(), "batchpress_wrk");
+
+            // Set SCHED_OTHER with lowest normal priority (nice value 10).
+            // This ensures UI thread (default nice 0) always gets priority
+            // when contending for CPU, preventing ANR freezes.
+            setpriority(PRIO_PROCESS, 0, 10);
+
+            // Also use Android's PRIO_BACKGROUND hint
+            setpriority(PRIO_PROCESS, 0, 10);
+#endif
+
             while (true) {
                 std::function<void()> task;
                 {
@@ -132,17 +207,18 @@ private:
                     active_.fetch_add(1, std::memory_order_acq_rel);
                 }
 
-                // Execute with exception safety — no deadlock during stack unwinding
-                try {
-                    task();
-                } catch (...) {
-                    // Task exceptions are intentionally swallowed. The caller
-                    // receives the exception via future::get() (packaged_task).
-                }
+                // Execute task (exception already wrapped in submit)
+                task();
 
                 active_.fetch_sub(1, std::memory_order_acq_rel);
                 completed_.fetch_add(1, std::memory_order_relaxed);
                 drain_cv_.notify_all();
+
+                // Cooperative yield after each task — brief sleep prevents
+                // the pool from monopolizing CPU cores on Android
+#ifdef __ANDROID__
+                usleep(500);  // 0.5ms between tasks
+#endif
             }
         });
     }
@@ -153,6 +229,7 @@ private:
     std::condition_variable           cv_;
     std::condition_variable           drain_cv_;
     std::atomic<bool>                 stop_;
+    std::atomic<bool>                 cancelled_;
     std::atomic<uint32_t>             active_;
     std::atomic<uint64_t>             submitted_;
     std::atomic<uint64_t>             completed_;

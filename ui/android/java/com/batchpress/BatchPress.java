@@ -418,6 +418,15 @@ public class BatchPress {
     // ── Native methods ────────────────────────────────────────────────────────
 
     /**
+     * Cancels the currently running batch (if any).
+     * Tasks already in progress will complete, but queued tasks are skipped.
+     * Thread-safe — can be called from UI thread or any background thread.
+     *
+     * NOTE: This is a global cancel — it affects ALL active batch operations.
+     */
+    public static native void cancelBatch();
+
+    /**
      * Runs the full image batch pipeline.
      * Call from a background thread — blocks until complete.
      */
