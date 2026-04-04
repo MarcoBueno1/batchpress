@@ -234,13 +234,11 @@ static void render_ui(const SelectState& state) {
     term_hide_cursor();
 
     int term_rows = 24;
-    int term_cols = 80;
 
     // Try to get terminal size
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
         term_rows = ws.ws_row;
-        term_cols = ws.ws_col;
     }
 
     // ── Title ─────────────────────────────────────────────────────────────
@@ -380,8 +378,8 @@ static void render_ui(const SelectState& state) {
 
 SelectResult run_select_ui(
     const batchpress::FileScanReport& report,
-    const batchpress::Config& img_cfg,
-    const batchpress::VideoConfig& vid_cfg,
+    const batchpress::Config& /*img_cfg*/,
+    const batchpress::VideoConfig& /*vid_cfg*/,
     const std::string& filter_type,
     double min_savings_pct)
 {
