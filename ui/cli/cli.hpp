@@ -22,6 +22,7 @@ enum class Mode {
     Scan,           ///< Analyse images — suggest best config
     ScanVideo,      ///< Analyse videos — suggest best codec/CRF
     ScanAll,        ///< Analyse both images and videos
+    Select,         ///< Interactive file selection — scan, pick files, then process
 };
 
 /// All parsed arguments.
@@ -32,6 +33,10 @@ struct Args {
     batchpress::VideoConfig video_cfg;         ///< Process / DryRun (videos)
     batchpress::ScanConfig  scan_cfg;          ///< Image scan
     batchpress::VideoScanConfig vscan_cfg;     ///< Video scan
+
+    // Select mode options
+    std::string select_filter;      ///< Optional: "image", "video", or "all"
+    double      select_min_savings = 0.0;  ///< Only show files with >= this savings %
 };
 
 Args parse_args(int argc, char* argv[]);

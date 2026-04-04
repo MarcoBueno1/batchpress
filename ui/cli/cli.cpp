@@ -27,6 +27,7 @@ MODES:
   --scan                Analyse images → suggest best format/resize per directory.
   --scan-video          Analyse videos → detect best codec/CRF for this system.
   --scan-all            Analyse both images and videos together.
+  --select              Interactive file selection: scan, pick files, then process.
 
 OUTPUT:
   --output <dir>        Write to separate directory (disables in-place).
@@ -42,6 +43,10 @@ IMAGE OPTIONS:
   --format  <fmt>       jpg | png | bmp | webp | same  (default: same)
   --quality <1-100>     JPEG/WebP quality              (default: 90)
 
+SELECT MODE OPTIONS:
+  --filter <type>       image | video | all  (default: all)
+  --min-savings <pct>   Only show files with >= this savings % (default: 0)
+
 COMMON OPTIONS:
   --threads <n>         Worker threads (default: CPU cores)
   --no-recursive        Do not traverse subdirectories
@@ -51,9 +56,24 @@ COMMON OPTIONS:
   --verbose             Per-file details or all scan candidates
   --help                Show this help
 
+INTERACTIVE SELECT CONTROLS:
+  ↑/↓  or  k/j         Navigate file list
+  Space                Toggle selection of current file
+  a                    Select / Deselect all
+  i                    Invert selection
+  Enter                Process selected files
+  q / Ctrl+C           Quit without processing
+  Type to filter       Start typing to filter by filename
+
 EXAMPLES:
   # Scan everything first — see what you can save
   batchpress --input /sdcard/DCIM --scan-all
+
+  # Interactive select — pick files, then process
+  batchpress --input /sdcard/DCIM --select
+
+  # Select with filter — only images with >50% savings
+  batchpress --input ./media/ --select --filter image --min-savings 50
 
   # Apply in-place with best auto settings
   batchpress --input /sdcard/DCIM
@@ -93,6 +113,7 @@ Args parse_args(int argc, char* argv[]) {
         else if (arg == "--scan")       { args.mode = Mode::Scan;      }
         else if (arg == "--scan-video") { args.mode = Mode::ScanVideo; }
         else if (arg == "--scan-all")   { args.mode = Mode::ScanAll;   }
+        else if (arg == "--select")     { args.mode = Mode::Select;    }
 
         // ── Input ─────────────────────────────────────────────────────────
         else if (arg == "--input") {
@@ -175,6 +196,15 @@ Args parse_args(int argc, char* argv[]) {
                 static_cast<uint32_t>(std::stoul(next(i, "--samples"))); ++i;
         }
         else if (arg == "--verbose") { args.verbose = true; }
+
+        // ── Select mode options ───────────────────────────────────────────
+        else if (arg == "--filter") {
+            args.select_filter = next(i, "--filter"); ++i;
+        }
+        else if (arg == "--min-savings") {
+            args.select_min_savings = std::stod(next(i, "--min-savings")); ++i;
+        }
+
         else {
             throw std::invalid_argument("Unknown argument: " + arg
                 + "\nRun with --help for usage.");

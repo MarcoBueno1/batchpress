@@ -16,6 +16,7 @@
 #include "progress.hpp"
 #include "scan_report.hpp"
 #include "video_scan_report.hpp"
+#include "select.hpp"
 
 #include <batchpress/processor.hpp>
 #include <batchpress/scanner.hpp>
@@ -32,6 +33,7 @@ extern "C" {
 #include <mutex>
 #include <atomic>
 #include <cstdlib>
+#include <algorithm>
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -353,6 +355,227 @@ int main(int argc, char* argv[]) {
             case cli::Mode::Process:
             case cli::Mode::DryRun:
                 return run_process(args);
+
+            case cli::Mode::Select: {
+                // Suppress FFmpeg logs
+                av_log_set_level(AV_LOG_ERROR);
+                setenv("X265_LOG", "quiet", 0);
+
+                std::cout << "\033[36m[batchpress]\033[0m Scanning files in \033[1m"
+                          << args.process_cfg.input_dir << "\033[0m\n";
+                std::cout << "\033[90m  (analyzing all images and videos...)\033[0m\n\n";
+
+                // Run combined scan (images + videos)
+                batchpress::ScanConfig scan_cfg = args.scan_cfg;
+                auto img_report = batchpress::scan_files(scan_cfg);
+
+                // Run videoScanReport
+                batchpress::VideoScanConfig vscan_cfg = args.vscan_cfg;
+                auto vid_report = batchpress::run_video_scan(vscan_cfg);
+
+                // Merge video metadata into FileItem list
+                // For now we'll create FileItems from video metadata
+                // We need to actually process videos individually to get projections
+                // For simplicity in select mode, we'll use the scan report data
+                
+                // Actually let's properly create FileItems for videos too
+                // We'll do a per-file video scan approach
+                // For now, let's use a simpler approach: just use image scan + video batch dry-run
+                
+                // Better approach: collect all videos and create FileItems with estimates
+                std::vector<batchpress::FileItem> all_files = std::move(img_report.files);
+                
+                // Add video items from video scan
+                // We need to read individual video metadata
+                batchpress::VideoConfig vid_cfg_temp = args.video_cfg;
+                vid_cfg_temp.dry_run = true;
+                
+                // Collect video paths
+                std::vector<batchpress::fs::path> video_paths;
+                auto add_video = [&](const batchpress::fs::directory_entry& e) {
+                    static const std::vector<std::string> video_exts = {
+                        ".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".flv",
+                        ".m4v", ".3gp", ".ts", ".mts", ".m2ts"
+                    };
+                    std::string ext = e.path().extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    for (const auto& ve : video_exts)
+                        if (ext == ve && e.is_regular_file()) { video_paths.push_back(e.path()); return; }
+                };
+                
+                if (args.video_cfg.recursive) {
+                    for (const auto& e : batchpress::fs::recursive_directory_iterator(
+                            args.video_cfg.input_dir, 
+                            batchpress::fs::directory_options::skip_permission_denied))
+                        add_video(e);
+                } else {
+                    for (const auto& e : batchpress::fs::directory_iterator(args.video_cfg.input_dir))
+                        add_video(e);
+                }
+                
+                // Read metadata for each video and create FileItem
+                for (const auto& vp : video_paths) {
+                    try {
+                        batchpress::VideoMeta vm = batchpress::read_video_meta(vp);
+                        batchpress::FileItem fi;
+                        fi.type = batchpress::FileItem::Type::Video;
+                        fi.path = vp;
+                        fi.filename = vp.filename().string();
+                        fi.file_size = vm.file_bytes;
+                        fi.width = static_cast<uint32_t>(vm.width);
+                        fi.height = static_cast<uint32_t>(vm.height);
+                        fi.duration_sec = vm.duration_sec;
+                        fi.video_codec = vm.video_codec_name;
+                        fi.audio_codec = vm.audio_codec_name;
+                        fi.format = vm.container_name;
+                        
+                        try {
+                            fi.last_modified = batchpress::fs::last_write_time(vp);
+                            fi.creation_time = fi.last_modified;
+                            fi.last_access = fi.last_modified;
+                        } catch (...) {}
+                        
+                        // Estimate savings using CRF factor
+                        batchpress::VideoConfig probe_cfg = args.video_cfg;
+                        auto caps = batchpress::probe_codec_caps();
+                        auto best_vc = caps.best_video();
+                        double crf_factor = 0.50;
+                        switch (best_vc) {
+                            case batchpress::VideoCodec::H265: crf_factor = 0.40; break;
+                            case batchpress::VideoCodec::H264: crf_factor = 0.55; break;
+                            case batchpress::VideoCodec::VP9:  crf_factor = 0.45; break;
+                            default: break;
+                        }
+                        
+                        fi.projected_size = static_cast<uint64_t>(
+                            static_cast<double>(vm.file_bytes) * crf_factor);
+                        fi.savings_pct = 100.0 * (1.0 - crf_factor);
+                        
+                        std::string codec_str;
+                        switch (best_vc) {
+                            case batchpress::VideoCodec::H265: codec_str = "H.265"; break;
+                            case batchpress::VideoCodec::H264: codec_str = "H.264"; break;
+                            case batchpress::VideoCodec::VP9:  codec_str = "VP9"; break;
+                            default: codec_str = "auto"; break;
+                        }
+                        fi.suggested_codec = codec_str + " CRF" + std::to_string(
+                            best_vc == batchpress::VideoCodec::H265 ? 28 :
+                            best_vc == batchpress::VideoCodec::H264 ? 26 : 33);
+                        
+                        all_files.push_back(std::move(fi));
+                    } catch (...) {
+                        // Skip unreadable videos
+                    }
+                }
+                
+                // Create combined report
+                batchpress::FileScanReport combined;
+                combined.files = std::move(all_files);
+                combined.elapsed_sec = img_report.elapsed_sec;
+                
+                // Sort by savings_pct descending
+                std::sort(combined.files.begin(), combined.files.end(),
+                    [](const batchpress::FileItem& a, const batchpress::FileItem& b) {
+                        return a.savings_pct > b.savings_pct;
+                    });
+                
+                // Now run interactive select UI
+                auto select_result = cli::run_select_ui(
+                    combined,
+                    args.process_cfg,
+                    args.video_cfg,
+                    args.select_filter,
+                    args.select_min_savings
+                );
+                
+                if (select_result.proceed_with_processing && !select_result.selected.empty()) {
+                    // Separate images and videos
+                    std::vector<batchpress::FileItem> images_to_process;
+                    std::vector<batchpress::FileItem> videos_to_process;
+                    
+                    for (const auto& fi : select_result.selected) {
+                        if (fi.type == batchpress::FileItem::Type::Image)
+                            images_to_process.push_back(fi);
+                        else
+                            videos_to_process.push_back(fi);
+                    }
+                    
+                    int exit_code = 0;
+                    
+                    // Process selected images
+                    if (!images_to_process.empty()) {
+                        batchpress::Config img_cfg = args.process_cfg;
+                        
+                        auto bar = std::make_shared<cli::ProgressBar>(
+                            static_cast<uint32_t>(images_to_process.size()));
+                        std::mutex console_mu;
+                        bool verbose = args.verbose;
+                        
+                        img_cfg.on_progress = [&bar, &console_mu, verbose]
+                            (const batchpress::TaskResult& res, uint32_t, uint32_t)
+                        {
+                            bar->tick(res.success || res.skipped);
+                            if (verbose && !res.skipped) {
+                                std::lock_guard lock(console_mu);
+                                if (res.success) {
+                                    std::cout << "\n  \033[32m✓\033[0m "
+                                              << res.input_path.filename().string();
+                                } else {
+                                    std::cout << "\n  \033[31m✗\033[0m "
+                                              << res.input_path.filename().string()
+                                              << ": " << res.error_msg;
+                                }
+                            }
+                        };
+                        
+                        auto img_report = batchpress::process_files(images_to_process, img_cfg);
+                        bar->finish();
+                        print_batch_report(img_report,
+                            "batchpress — Selected Images");
+                        if (img_report.failed > 0) exit_code = 1;
+                    }
+                    
+                    // Process selected videos
+                    if (!videos_to_process.empty()) {
+                        batchpress::VideoConfig vid_cfg = args.video_cfg;
+                        
+                        std::atomic<uint32_t> last_files_done{0};
+                        std::shared_ptr<cli::ProgressBar> vbar;
+                        std::mutex vbar_mu;
+                        bool verbose = args.verbose;
+                        
+                        vid_cfg.on_progress = [&](const batchpress::fs::path& path,
+                                                   uint64_t frame_done, uint64_t frame_total,
+                                                   uint32_t files_done, uint32_t files_total)
+                        {
+                            std::lock_guard lock(vbar_mu);
+                            if (!vbar && files_total > 0)
+                                vbar = std::make_shared<cli::ProgressBar>(files_total);
+                            
+                            if (vbar && files_done > last_files_done.load()) {
+                                last_files_done.store(files_done);
+                                vbar->tick(true);
+                            }
+                            
+                            if (verbose && frame_total > 0) {
+                                uint32_t pct = static_cast<uint32_t>(
+                                    frame_done * 100 / frame_total);
+                                std::cout << "\r  \033[36m" << path.filename().string()
+                                          << "\033[0m  " << pct << "%   " << std::flush;
+                            }
+                        };
+                        
+                        auto vid_report = batchpress::process_video_files(videos_to_process, vid_cfg);
+                        if (vbar) vbar->finish();
+                        print_video_report(vid_report);
+                        if (vid_report.failed > 0) exit_code = 1;
+                    }
+                    
+                    return exit_code;
+                }
+                
+                return 0;
+            }
         }
 
         return 0;

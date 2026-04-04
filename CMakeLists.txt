@@ -135,6 +135,7 @@ if(NOT ANDROID)
         ui/cli/progress.cpp
         ui/cli/scan_report.cpp
         ui/cli/video_scan_report.cpp
+        ui/cli/select.cpp
     )
 
     target_include_directories(batchpress PRIVATE ui/cli)
