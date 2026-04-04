@@ -69,11 +69,12 @@ $ batchpress --input ./media/ --select
   Filter: (type to filter)
   15/15 selected  |  2.9 MB → 393 KB
 
-  [✓] File                              Original   Output      Size        Gain%  Quality
-  [✓] photo_4k_gradient.webp            3840x2160  1920x1080  841 KB → 393 KB  96%  ★★☆☆☆
-  [✓] photo_fullhd_circles.webp         1920x1080    same     283 KB → 101 KB  95%  ★★☆☆☆
-  [✓] video_1080p_h264_speech.mp4       1920x1080  1920x1080   12 MB →  4.8 MB  60%  ★★★★☆
- >[✓] photo_hd_stripes.webp             1280x720     same      52 KB →  20 KB  94%  ★★★☆☆
+  [ ] File                              Original Res  Output Res  Size (Orig → Proj)  Savings  Quality Est.
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [✓] photo_4k_gradient.webp            3840x2160     1920x1080   841 KB → 393 KB      96%     ★★☆☆☆
+  [✓] photo_fullhd_circles.webp         1920x1080       same      283 KB → 101 KB      95%     ★★☆☆☆
+  [✓] video_1080p_h264_speech.mp4       1920x1080     1920x1080    12 MB →  4.8 MB     60%     ★★★★☆
+ >[✓] photo_hd_stripes.webp             1280x720        same       52 KB →  20 KB      94%     ★★★☆☆
 
   ↑↓/kj:navigate  Space:toggle  a:all  i:invert  Enter:process  q:quit
 ```

@@ -276,19 +276,25 @@ static void render_ui(const SelectState& state) {
     term_color("1;37");  // bold white
     std::cout << "  [ ] File";
     term_goto(header_row, 50);
-    std::cout << "Original";
+    std::cout << "Original Res";
     term_goto(header_row, 62);
-    std::cout << "Output";
+    std::cout << "Output Res";
     term_goto(header_row, 76);
-    std::cout << "Size";
+    std::cout << "Size (Orig → Proj)";
     term_goto(header_row, 96);
-    std::cout << "Gain%";
+    std::cout << "Savings";
     term_goto(header_row, 108);
-    std::cout << "Quality";
+    std::cout << "Quality Est.";
+    term_reset_color();
+
+    // ── Separator line under headers ──────────────────────────────────────
+    term_goto(header_row + 1, 1);
+    term_color("90");  // dim grey
+    std::cout << "  ─────────────────────────────────────────────────────────────────────────────────────────────────";
     term_reset_color();
 
     // ── File list ─────────────────────────────────────────────────────────
-    int list_start = header_row + 1;
+    int list_start = header_row + 2;
     int list_end = term_rows - 4;  // leave room for footer
     int visible = list_end - list_start + 1;
     if (visible < 1) visible = 1;
