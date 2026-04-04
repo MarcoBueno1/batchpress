@@ -59,8 +59,15 @@ add_library(batchpress_core SHARED
     core/src/types.cpp
     core/src/processor.cpp
     core/src/scanner.cpp
-    core/src/video_processor.cpp
 )
+
+# Video processor is optional on Android (requires ffmpeg-kit)
+if(BATCHPRESS_ENABLE_VIDEO AND (NOT ANDROID OR DEFINED FFMPEG_KIT_DIR))
+    target_sources(batchpress_core PRIVATE core/src/video_processor.cpp)
+    if(ANDROID)
+        target_compile_definitions(batchpress_core PRIVATE BATCHPRESS_HAS_VIDEO)
+    endif()
+endif()
 
 target_include_directories(batchpress_core
     PUBLIC
@@ -85,13 +92,12 @@ endif()
 
 # ── FFmpeg / libav linking ─────────────────────────────────────────────────────
 
+option(BATCHPRESS_ENABLE_VIDEO "Enable video processing (requires ffmpeg-kit on Android)" ON)
+
 if(ANDROID)
     # ffmpeg-kit: set FFMPEG_KIT_DIR to the extracted ffmpeg-kit AAR/zip path
     # e.g. cmake ... -DFFMPEG_KIT_DIR=/path/to/ffmpeg-kit-full
-    if(NOT DEFINED FFMPEG_KIT_DIR)
-        message(WARNING "FFMPEG_KIT_DIR not set — video processing will not link. "
-                        "Download ffmpeg-kit from https://github.com/arthenica/ffmpeg-kit")
-    else()
+    if(BATCHPRESS_ENABLE_VIDEO AND DEFINED FFMPEG_KIT_DIR)
         set(FFMPEG_LIB_DIR "${FFMPEG_KIT_DIR}/android/libs/${ANDROID_ABI}")
         target_include_directories(batchpress_core PRIVATE "${FFMPEG_KIT_DIR}/android/include")
         foreach(LIB avcodec avformat avutil swscale swresample)
@@ -101,6 +107,12 @@ if(ANDROID)
             target_link_libraries(batchpress_core PRIVATE ${LIB})
         endforeach()
         target_link_libraries(batchpress_core PRIVATE log)
+        target_compile_definitions(batchpress_core PRIVATE BATCHPRESS_HAS_VIDEO)
+        message(STATUS "Video processing ENABLED (ffmpeg-kit: ${FFMPEG_KIT_DIR})")
+    else()
+        message(WARNING "Video processing DISABLED — ffmpeg-kit not found. "
+                        "Download from https://github.com/arthenica/ffmpeg-kit/releases "
+                        "and set -DFFMPEG_KIT_DIR=<path> or -DBATCHPRESS_ENABLE_VIDEO=ON")
     endif()
 else()
     # Linux / Windows / macOS: use system FFmpeg or vcpkg

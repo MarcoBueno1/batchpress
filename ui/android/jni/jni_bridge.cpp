@@ -132,6 +132,7 @@ Java_com_batchpress_BatchPress_runBatch(
         static_cast<jboolean>(report.dry_run));
 }
 
+#ifdef BATCHPRESS_HAS_VIDEO
 // ══════════════════════════════════════════════════════════════════════════════
 //  VIDEO BATCH — runVideoBatch()
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1018,6 +1019,7 @@ Java_com_batchpress_BatchPress_scanVideoFiles(
         static_cast<jdouble>(elapsed), static_cast<jdouble>(savings),
         static_cast<jdouble>(total_s), static_cast<jint>(0), static_cast<jint>(items.size()));
 }
+#endif // BATCHPRESS_HAS_VIDEO
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  UTILITY — diskFreeBytes()
