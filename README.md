@@ -283,25 +283,132 @@ COMMON:
 
 ## Android Java API
 
-```kotlin
-import com.batchpress.BatchPress
+The complete core library is exposed via JNI. All methods block — call from a
+background thread (Kotlin coroutine, ExecutorService, RxJava).
 
-// In a coroutine or background thread:
-val result = BatchPress.runBatch(
+### Scan files → user picks → process
+
+```kotlin
+import com.batchpress.*
+
+viewModelScope.launch(Dispatchers.IO) {
+    // 1. Scan all files with per-file projections
+    val scan = BatchPress.scanFiles(
+        rootDir   = "/sdcard/DCIM",
+        recursive = true,
+        samples   = 5,           // 0 = full encode (slowest, most accurate)
+        threads   = 0,
+        listener  = object : BatchPress.ScanProgressListener {
+            override fun onProgress(name: String, done: Int, total: Int) {
+                progressBar.progress = ((done * 100) / total)
+            }
+        }
+    )
+
+    println("Found: ${scan.imageCount} images, ${scan.videoCount} videos")
+    println("Overall savings: ${scan.overallSavingsPct}%")
+
+    // 2. Filter — only files with >40% savings
+    val selected = scan.files.filter { it.savingsPct > 40.0 }
+
+    // 3. Process selected images
+    val imgResult = BatchPress.processFiles(
+        files     = selected.toTypedArray(),
+        inputDir  = "/sdcard/DCIM",
+        outputDir = "",              // empty = in-place
+        resize    = "fit:1920x1080",
+        format    = "webp",
+        quality   = 85,
+        threads   = 0,
+        dryRun    = false,
+        dedup     = true,
+        listener  = object : BatchPress.ProgressListener {
+            override fun onProgress(filename: String, success: Boolean,
+                skipped: Boolean, done: Int, total: Int,
+                inputBytes: Long, outputBytes: Long, dryRun: Boolean) {
+                // update progress
+            }
+        }
+    )
+
+    // 4. Process selected videos
+    val vidResult = BatchPress.processVideoFiles(
+        files       = selected.toTypedArray(),
+        inputDir    = "/sdcard/DCIM",
+        outputDir   = "",
+        vcodec      = "h265",
+        crf         = 28,           // -1 = auto
+        maxRes      = "1080p",
+        audioBps    = -1,           // auto (48kbps speech, 96kbps music)
+        threads     = 0,
+        dryRun      = false,
+        dedup       = true,
+        listener    = object : BatchPress.VideoProgressListener {
+            override fun onProgress(path: String, frameDone: Long,
+                frameTotal: Long, filesDone: Int, filesTotal: Int) {
+                // per-frame progress
+            }
+        }
+    )
+}
+```
+
+### Traditional batch (no selection)
+
+```kotlin
+// Images
+val imgResult = BatchPress.runBatch(
     inputDir  = "/sdcard/DCIM",
-    outputDir = "",              // empty = in-place
+    outputDir = "",
     resize    = "fit:1920x1080",
     format    = "webp",
     quality   = 85,
-    threads   = 0,               // 0 = all cores
+    threads   = 0,
     dryRun    = false,
+    dedup     = true,
     listener  = { filename, success, skipped, done, total, inBytes, outBytes, dry ->
-        runOnUiThread {
-            progressBar.progress = ((done * 100) / total).toInt()
-        }
+        progressBar.progress = ((done * 100) / total)
+    }
+)
+
+// Videos
+val vidResult = BatchPress.runVideoBatch(
+    inputDir  = "/sdcard/DCIM",
+    outputDir = "",
+    vcodec    = "h265",
+    crf       = 28,
+    maxRes    = "1080p",
+    audioBps  = -1,
+    threads   = 0,
+    dryRun    = false,
+    dedup     = true,
+    listener  = { path, frameDone, frameTotal, filesDone, filesTotal ->
+        // per-frame progress
     }
 )
 ```
+
+### Legacy per-directory scan
+
+```kotlin
+val imgSummary = BatchPress.runScan("/sdcard/DCIM", true, 5, 0, null)
+println("Best config: ${imgSummary.bestConfig}")
+println("Savings: ${imgSummary.savingsPct}%")
+
+val vidSummary = BatchPress.runVideoScan("/sdcard/DCIM", true, 0, null)
+println("Suggested codec: ${vidSummary.suggestedCodec} CRF${vidSummary.suggestedCrf}")
+```
+
+### Available Java classes
+
+| Class | Purpose |
+|-------|---------|
+| `FileItem` | Per-file metadata: path, type, dimensions, size, projected savings |
+| `FileScanReport` | scanFiles() result: FileItem[], counts, totals |
+| `BatchResult` | Image batch result: total, succeeded, failed, bytes saved |
+| `VideoBatchResult` | Video batch result: codec usage breakdown, bytes saved |
+| `ScanSummary` | Legacy per-directory image scan summary |
+| `VideoScanSummary` | Legacy per-directory video scan summary |
 
 ---
 
