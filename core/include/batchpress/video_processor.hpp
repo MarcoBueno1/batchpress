@@ -32,6 +32,7 @@
 #include <string>
 #include <cstdint>
 #include <vector>
+#include <optional>
 
 namespace batchpress {
 
@@ -117,20 +118,20 @@ struct BATCHPRESS_API VideoConfig {
 
     // ── Quality ───────────────────────────────────────────────────────────
     /**
-     * CRF value. -1 = automatic (recommended):
+     * CRF value. nullopt = automatic (recommended):
      *   H.265 → CRF 28
      *   H.264 → CRF 26
      *   VP9   → CRF 33
      * Lower = better quality, larger file.
      */
-    int            crf          = -1;
+    std::optional<int> crf;
 
     // ── Resolution ────────────────────────────────────────────────────────
     ResolutionCap  resolution   = ResolutionCap::Cap1080p;
 
     // ── Audio ─────────────────────────────────────────────────────────────
-    /// -1 = auto (48kbps for speech, 96kbps for music, removed if silent)
-    int            audio_bitrate_kbps = -1;
+    /// nullopt = auto (48kbps for speech, 96kbps for music, removed if silent)
+    std::optional<int> audio_bitrate_kbps;
 
     // ── Progress callback ─────────────────────────────────────────────────
     /**

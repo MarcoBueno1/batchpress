@@ -35,10 +35,10 @@ namespace fs = std::filesystem;
 
 // ── HashCache implementation ──────────────────────────────────────────────────
 
-const fs::path* batchpress::HashCache::get(const std::string& input_sha256) {
+std::optional<fs::path> batchpress::HashCache::get(const std::string& input_sha256) {
     std::shared_lock lock(mutex_);
     auto it = cache_.find(input_sha256);
-    return it != cache_.end() ? &it->second : nullptr;
+    return it != cache_.end() ? std::optional<fs::path>(it->second) : std::nullopt;
 }
 
 void batchpress::HashCache::put(const std::string& input_sha256, const fs::path& output_path) {
@@ -133,23 +133,6 @@ ResizeSpec::compute(uint32_t w, uint32_t h) const noexcept {
         }
     }
     return {w, h};
-}
-
-// ── BatchReport ───────────────────────────────────────────────────────────────
-
-double BatchReport::throughput() const noexcept {
-    return elapsed_sec > 0.0 ? succeeded / elapsed_sec : 0.0;
-}
-
-int64_t BatchReport::bytes_saved() const noexcept {
-    return static_cast<int64_t>(input_bytes_total)
-         - static_cast<int64_t>(output_bytes_total);
-}
-
-double BatchReport::savings_pct() const noexcept {
-    if (input_bytes_total == 0) return 0.0;
-    return 100.0 * (1.0 - static_cast<double>(output_bytes_total)
-                           / static_cast<double>(input_bytes_total));
 }
 
 // ── disk_free_bytes ───────────────────────────────────────────────────────────

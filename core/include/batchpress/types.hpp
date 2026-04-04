@@ -29,10 +29,12 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <optional>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <shared_mutex>
+#include <variant>
 
 namespace batchpress {
 
@@ -42,10 +44,20 @@ namespace fs = std::filesystem;
 
 /**
  * @brief Thread-safe cache for file hashes and their processed output paths.
+ *
+ * Not copyable or movable — always used via shared_ptr to prevent
+ * accidental data races during concurrent access.
  */
 class BATCHPRESS_API HashCache {
 public:
-    const fs::path* get(const std::string& input_sha256);
+    HashCache() = default;
+    HashCache(const HashCache&) = delete;
+    HashCache& operator=(const HashCache&) = delete;
+    HashCache(HashCache&&) = delete;
+    HashCache& operator=(HashCache&&) = delete;
+
+    /// Returns the cached output path, or nullopt if not found.
+    std::optional<fs::path> get(const std::string& input_sha256);
     void put(const std::string& input_sha256, const fs::path& output_path);
     void clear();
 
@@ -126,8 +138,8 @@ struct BATCHPRESS_API TaskResult {
  */
 using ProgressCallback = std::function<void(
     const TaskResult& result,
-    uint32_t done,
-    uint32_t total
+    uint64_t done,
+    uint64_t total
 )>;
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -163,10 +175,32 @@ struct BATCHPRESS_API Config {
 // ── File Item for selective processing ────────────────────────────────────────
 
 /**
+ * @brief Image-specific metadata for FileItem.
+ */
+struct BATCHPRESS_API ImageFileInfo {
+    std::string format;              ///< e.g. "JPEG", "PNG", "WebP"
+    std::string suggested_codec;     ///< e.g. "WebP q85 fit:1920x1080"
+};
+
+/**
+ * @brief Video-specific metadata for FileItem.
+ */
+struct BATCHPRESS_API VideoFileInfo {
+    double      duration_sec = 0.0;  ///< Video duration in seconds
+    std::string video_codec;         ///< Current video codec name (e.g. "h264")
+    std::string audio_codec;         ///< Current audio codec name (e.g. "aac")
+    std::string container;           ///< Container format (e.g. "mp4")
+    std::string suggested_codec;     ///< e.g. "H.265 CRF28"
+};
+
+/**
  * @brief Represents a single media file with metadata and projected savings.
  *
  * Returned by scan_files() so UI can display per-file details and let
  * the user choose which files to actually process.
+ *
+ * Uses std::variant<ImageFileInfo, VideoFileInfo> to enforce mutual
+ * exclusivity — an image item cannot accidentally hold video metadata.
  */
 struct BATCHPRESS_API FileItem {
     enum class Type { Image, Video } type = Type::Image;
@@ -174,10 +208,10 @@ struct BATCHPRESS_API FileItem {
     fs::path    path;                   ///< Absolute path to the file
     std::string filename;               ///< Just the filename with extension
 
-    // Timestamps
-    std::filesystem::file_time_type creation_time;   ///< File creation time
-    std::filesystem::file_time_type last_access;     ///< Last access time
-    std::filesystem::file_time_type last_modified;   ///< Last modification time
+    // Timestamps (creation_time is optional — not portable on Linux)
+    std::optional<std::filesystem::file_time_type> creation_time;
+    std::optional<std::filesystem::file_time_type> last_access;
+    std::filesystem::file_time_type last_modified{};  ///< Always available
 
     // Dimensions (images: pixels, videos: resolution)
     uint32_t    width  = 0;
@@ -190,19 +224,17 @@ struct BATCHPRESS_API FileItem {
     uint64_t    projected_size = 0;     ///< Estimated size after compression
     double      savings_pct = 0.0;      ///< Expected savings percentage (0-100)
 
-    // Image-specific: format info
-    std::string format;                 ///< e.g. "JPEG", "PNG", "WebP"
-    std::string suggested_codec;        ///< e.g. "WebP q85 fit:1920x1080"
-
-    // Video-specific: duration, codecs
-    double      duration_sec = 0.0;     ///< Video duration in seconds (0 for images)
-    std::string video_codec;            ///< Current video codec name
-    std::string audio_codec;            ///< Current audio codec name
+    // Type-specific metadata — enforced by std::variant
+    std::variant<ImageFileInfo, VideoFileInfo> meta;
 
     // Computed helpers
     uint64_t projected_savings() const noexcept {
         return (file_size > projected_size) ? (file_size - projected_size) : 0;
     }
+
+    // Convenience accessors
+    const ImageFileInfo& image_info() const { return std::get<ImageFileInfo>(meta); }
+    const VideoFileInfo& video_info() const { return std::get<VideoFileInfo>(meta); }
 };
 
 /**
@@ -262,9 +294,16 @@ struct BATCHPRESS_API BatchReport {
     double   elapsed_sec         = 0.0;
     bool     dry_run             = false;
 
-    double  throughput()  const noexcept;
-    int64_t bytes_saved() const noexcept;
-    double  savings_pct() const noexcept;
+    double throughput() const noexcept {
+        return elapsed_sec > 0 ? static_cast<double>(succeeded) / elapsed_sec : 0.0;
+    }
+    int64_t bytes_saved() const noexcept {
+        return static_cast<int64_t>(input_bytes_total) - static_cast<int64_t>(output_bytes_total);
+    }
+    double savings_pct() const noexcept {
+        if (input_bytes_total == 0) return 0.0;
+        return 100.0 * (1.0 - static_cast<double>(output_bytes_total) / static_cast<double>(input_bytes_total));
+    }
 };
 
 // ── Disk utility ──────────────────────────────────────────────────────────────

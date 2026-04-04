@@ -35,6 +35,7 @@
 #include <future>
 #include <atomic>
 #include <stdexcept>
+#include <algorithm>
 
 namespace batchpress {
 
@@ -43,14 +44,21 @@ namespace batchpress {
  *
  * Header-only implementation. No platform-specific code.
  * Compiles on Linux, Windows, macOS and Android NDK.
+ *
+ * Thread-safety guarantees:
+ *   - submit() is safe to call concurrently with shutdown()
+ *   - Workers catch all exceptions — no deadlock during stack unwinding
+ *   - active_ is incremented inside the lock — wait_all() never returns early
  */
 class BATCHPRESS_API ThreadPool {
 public:
-    explicit ThreadPool(size_t num_threads = std::thread::hardware_concurrency())
+    explicit ThreadPool(size_t num_threads = 0)
         : stop_(false), active_(0), submitted_(0), completed_(0)
     {
+        // Handle platforms where hardware_concurrency() returns 0
         if (num_threads == 0)
-            throw std::invalid_argument("ThreadPool: num_threads must be > 0");
+            num_threads = std::max(1u, std::thread::hardware_concurrency());
+
         workers_.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i)
             spawn_worker();
@@ -68,15 +76,16 @@ public:
         -> std::future<std::invoke_result_t<F, Args...>>
     {
         using R = std::invoke_result_t<F, Args...>;
-        if (stop_.load(std::memory_order_acquire))
-            throw std::runtime_error("ThreadPool: submit on stopped pool");
 
+        // Check stop_ INSIDE the lock to prevent TOCTOU race
         auto task = std::make_shared<std::packaged_task<R()>>(
             std::bind(std::forward<F>(f), std::forward<Args>(args)...)
         );
         auto future = task->get_future();
         {
             std::lock_guard lock(mu_);
+            if (stop_.load(std::memory_order_acquire))
+                throw std::runtime_error("ThreadPool: submit on stopped pool");
             queue_.emplace([task]{ (*task)(); });
         }
         submitted_.fetch_add(1, std::memory_order_relaxed);
@@ -92,9 +101,11 @@ public:
     }
 
     void shutdown() {
-        wait_all();
+        // Set stop FIRST so workers wake up and exit
         { std::lock_guard lock(mu_); stop_.store(true, std::memory_order_release); }
         cv_.notify_all();
+        // Then wait for all active tasks to finish
+        wait_all();
         for (auto& w : workers_) if (w.joinable()) w.join();
         workers_.clear();
     }
@@ -116,9 +127,19 @@ private:
                     if (stop_.load() && queue_.empty()) return;
                     task = std::move(queue_.front());
                     queue_.pop();
+                    // Increment active_ INSIDE the lock — prevents wait_all() from
+                    // returning prematurely when a task is popped but not yet started
                     active_.fetch_add(1, std::memory_order_acq_rel);
                 }
-                task();
+
+                // Execute with exception safety — no deadlock during stack unwinding
+                try {
+                    task();
+                } catch (...) {
+                    // Task exceptions are intentionally swallowed. The caller
+                    // receives the exception via future::get() (packaged_task).
+                }
+
                 active_.fetch_sub(1, std::memory_order_acq_rel);
                 completed_.fetch_add(1, std::memory_order_relaxed);
                 drain_cv_.notify_all();

@@ -424,19 +424,21 @@ int main(int argc, char* argv[]) {
                         fi.file_size = vm.file_bytes;
                         fi.width = static_cast<uint32_t>(vm.width);
                         fi.height = static_cast<uint32_t>(vm.height);
-                        fi.duration_sec = vm.duration_sec;
-                        fi.video_codec = vm.video_codec_name;
-                        fi.audio_codec = vm.audio_codec_name;
-                        fi.format = vm.container_name;
-                        
+
                         try {
                             fi.last_modified = batchpress::fs::last_write_time(vp);
                             fi.creation_time = fi.last_modified;
                             fi.last_access = fi.last_modified;
                         } catch (...) {}
-                        
+
+                        // Video-specific metadata via std::variant
+                        batchpress::VideoFileInfo vid_info;
+                        vid_info.duration_sec = vm.duration_sec;
+                        vid_info.video_codec = vm.video_codec_name;
+                        vid_info.audio_codec = vm.audio_codec_name;
+                        vid_info.container = vm.container_name;
+
                         // Estimate savings using CRF factor
-                        batchpress::VideoConfig probe_cfg = args.video_cfg;
                         auto caps = batchpress::probe_codec_caps();
                         auto best_vc = caps.best_video();
                         double crf_factor = 0.50;
@@ -446,11 +448,11 @@ int main(int argc, char* argv[]) {
                             case batchpress::VideoCodec::VP9:  crf_factor = 0.45; break;
                             default: break;
                         }
-                        
+
                         fi.projected_size = static_cast<uint64_t>(
                             static_cast<double>(vm.file_bytes) * crf_factor);
                         fi.savings_pct = 100.0 * (1.0 - crf_factor);
-                        
+
                         std::string codec_str;
                         switch (best_vc) {
                             case batchpress::VideoCodec::H265: codec_str = "H.265"; break;
@@ -458,10 +460,11 @@ int main(int argc, char* argv[]) {
                             case batchpress::VideoCodec::VP9:  codec_str = "VP9"; break;
                             default: codec_str = "auto"; break;
                         }
-                        fi.suggested_codec = codec_str + " CRF" + std::to_string(
+                        vid_info.suggested_codec = codec_str + " CRF" + std::to_string(
                             best_vc == batchpress::VideoCodec::H265 ? 28 :
                             best_vc == batchpress::VideoCodec::H264 ? 26 : 33);
-                        
+
+                        fi.meta = std::move(vid_info);
                         all_files.push_back(std::move(fi));
                     } catch (...) {
                         // Skip unreadable videos

@@ -347,6 +347,12 @@ static std::vector<size_t> pick_samples(size_t total, uint32_t max_samples) {
         ? static_cast<uint32_t>(total)
         : max_samples;
 
+    // Guard against division by zero when only 1 sample
+    if (n <= 1) {
+        idx.push_back(0);
+        return idx;
+    }
+
     idx.reserve(n);
     for (uint32_t i = 0; i < n; ++i)
         idx.push_back(static_cast<size_t>(
@@ -631,7 +637,10 @@ FileScanReport scan_files(const ScanConfig& cfg) {
     futures.reserve(all_metas.size());
 
     for (const auto& item : all_metas) {
-        futures.push_back(pool.submit([&, &meta = item.meta, &img_path = item.path]() -> FileItem {
+        // Capture by value — safe for thread pool submission
+        futures.push_back(pool.submit([meta = item.meta, img_path = item.path,
+                                        &candidates, samples_per_file,
+                                        &global_done, total_samples, &cfg]() -> FileItem {
             FileItem fi;
             fi.type = FileItem::Type::Image;
             fi.path = img_path;
@@ -640,33 +649,22 @@ FileScanReport scan_files(const ScanConfig& cfg) {
             fi.width = meta.width;
             fi.height = meta.height;
 
-            // Timestamps
+            // Timestamps (creation_time and last_access are optional — not portable on Linux)
             try {
                 fi.last_modified = fs::last_write_time(img_path);
-                // creation_time and last_access_time are not portable across platforms
-                // Use last_write_time as fallback for both
-                fi.creation_time = fi.last_modified;
+                fi.creation_time = fi.last_modified;  // best-effort fallback
                 fi.last_access = fi.last_modified;
             } catch (...) {
-                // If we can't get timestamps, use defaults
+                // If we can't get timestamps, leave them empty
             }
 
-            // Format info
-            fi.format = format_to_string(ImageFormat::Same);
-            if (!meta.extension.empty()) {
-                fi.format = meta.extension;
-                if (!fi.format.empty() && fi.format[0] == '.')
-                    fi.format = fi.format.substr(1);
-                // Uppercase
-                std::transform(fi.format.begin(), fi.format.end(),
-                               fi.format.begin(), ::toupper);
-            }
+            // Image-specific metadata via std::variant
+            ImageFileInfo img_info;
+            img_info.format = meta.extension.empty() ? "UNKNOWN" : meta.extension.substr(1);
+            std::transform(img_info.format.begin(), img_info.format.end(),
+                           img_info.format.begin(), ::toupper);
 
             // Test each candidate and find the best projection
-            // For simplicity, test only a subset of samples if samples_per_dir > 0
-            // Use at most 3 samples per file for estimation
-            auto sample_indices = pick_samples(1, std::min(samples_per_file, 3u));
-
             uint64_t best_projected = meta.file_bytes;
             double best_savings = 0.0;
             std::string best_codec;
@@ -704,7 +702,8 @@ FileScanReport scan_files(const ScanConfig& cfg) {
 
             fi.projected_size = best_projected;
             fi.savings_pct = best_savings;
-            fi.suggested_codec = best_codec;
+            img_info.suggested_codec = best_codec;
+            fi.meta = std::move(img_info);
 
             return fi;
         }));
