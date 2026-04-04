@@ -447,6 +447,25 @@ int main(int argc, char* argv[]) {
                         vid_info.audio_codec = vm.audio_codec_name;
                         vid_info.container = vm.container_name;
 
+                        // Compute projected resolution based on resolution cap
+                        uint32_t proj_w = static_cast<uint32_t>(vm.width);
+                        uint32_t proj_h = static_cast<uint32_t>(vm.height);
+                        if (args.video_cfg.resolution == batchpress::ResolutionCap::Cap1080p) {
+                            if (vm.height > 1080) {
+                                double scale = 1080.0 / vm.height;
+                                proj_w = static_cast<uint32_t>(vm.width * scale + 0.5);
+                                proj_h = 1080;
+                            }
+                        } else if (args.video_cfg.resolution == batchpress::ResolutionCap::Cap4K) {
+                            if (vm.height > 2160) {
+                                double scale = 2160.0 / vm.height;
+                                proj_w = static_cast<uint32_t>(vm.width * scale + 0.5);
+                                proj_h = 2160;
+                            }
+                        }
+                        vid_info.projected_width  = proj_w;
+                        vid_info.projected_height = proj_h;
+
                         // Estimate savings using CRF factor
                         auto caps = batchpress::probe_codec_caps();
                         auto best_vc = caps.best_video();
