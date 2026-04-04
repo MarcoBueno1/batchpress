@@ -37,6 +37,15 @@ extern "C" {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Portable environment variable setter
+static void set_env(const char* key, const char* val) {
+#ifdef _WIN32
+    _putenv_s(key, val);
+#else
+    setenv(key, val, 0);
+#endif
+}
+
 static std::string human_bytes(uint64_t b) {
     const char* u[] = {"B","KB","MB","GB","TB"};
     double v = static_cast<double>(b);
@@ -146,7 +155,7 @@ static int run_process(const cli::Args& args) {
     av_log_set_level(AV_LOG_ERROR);
     
     // Suppress x265 logging via environment variable
-    setenv("X265_LOG", "quiet", 0);
+    set_env("X265_LOG", "quiet");
 
     // ── Images ────────────────────────────────────────────────────────────
     batchpress::Config img_cfg = args.process_cfg;
@@ -359,7 +368,7 @@ int main(int argc, char* argv[]) {
             case cli::Mode::Select: {
                 // Suppress FFmpeg logs
                 av_log_set_level(AV_LOG_ERROR);
-                setenv("X265_LOG", "quiet", 0);
+                set_env("X265_LOG", "quiet");
 
                 std::cout << "\033[36m[batchpress]\033[0m Scanning files in \033[1m"
                           << args.process_cfg.input_dir << "\033[0m\n";

@@ -346,7 +346,8 @@ static void render_ui(const SelectState& state) {
             else if (fi.savings_pct >= 30) term_color("33");   // yellow
             else term_color("31");                              // red
         }
-        printf("%5.0f%%", fi.savings_pct);
+        std::cout << std::setw(5) << std::fixed << std::setprecision(0)
+                  << fi.savings_pct << "%";
         term_reset_color();
 
         // Type
