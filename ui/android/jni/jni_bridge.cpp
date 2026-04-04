@@ -37,8 +37,40 @@
 #define JSTR(env, js) ([](JNIEnv* e, jstring s) { \
     if (!s) return std::string(""); \
     const char* c = e->GetStringUTFChars(s, nullptr); \
+    if (!c) { e->ExceptionClear(); return std::string(""); } \
     std::string r(c); e->ReleaseStringUTFChars(s, c); return r; \
 })(env, js)
+
+// ── RAII wrapper for JNI global references ───────────────────────────────────
+// Prevents global reference table overflow in long-running apps.
+
+struct JniGlobalRef {
+    jobject obj;
+    JNIEnv* env;
+    explicit JniGlobalRef(JNIEnv* e, jobject local) : env(e) {
+        obj = local ? e->NewGlobalRef(local) : nullptr;
+    }
+    ~JniGlobalRef() {
+        if (obj && env) env->DeleteGlobalRef(obj);
+    }
+    jobject get() const { return obj; }
+    // Non-copyable, movable
+    JniGlobalRef(const JniGlobalRef&) = delete;
+    JniGlobalRef& operator=(const JniGlobalRef&) = delete;
+    JniGlobalRef(JniGlobalRef&& o) noexcept : obj(o.obj), env(o.env) {
+        o.obj = nullptr; o.env = nullptr;
+    }
+};
+
+// ── Helper: safe exception throwing ──────────────────────────────────────────
+
+static void jni_throw(JNIEnv* env, const char* cls, const char* msg) {
+    jclass exc = env->FindClass(cls);
+    if (exc) {
+        env->ThrowNew(exc, msg);
+        env->DeleteLocalRef(exc);
+    }
+}
 
 // ── Global JavaVM reference ──────────────────────────────────────────────────
 
@@ -94,23 +126,25 @@ Java_com_batchpress_BatchPress_runBatch(
     cfg.format      = batchpress::parse_format(JSTR(env, j_format));
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onProgress",
             "(Ljava/lang/String;ZIZJJZ)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const batchpress::TaskResult& res, uint64_t done, uint64_t total) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(
                     res.input_path.filename().string().c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jboolean>(res.success),
                     static_cast<jboolean>(res.skipped),
                     static_cast<jint>(done),
@@ -129,7 +163,7 @@ Java_com_batchpress_BatchPress_runBatch(
         report = batchpress::run_batch(cfg);
     } catch (const std::exception& ex) {
         LOGE("run_batch exception: %s", ex.what());
-        env->ThrowNew(env->FindClass("java/lang/RuntimeException"), ex.what());
+        jni_throw(env, "java/lang/RuntimeException", ex.what());
         return nullptr;
     }
 
@@ -191,24 +225,26 @@ Java_com_batchpress_BatchPress_runVideoBatch(
     if (j_audio_bps >= 0) cfg.audio_bitrate_kbps = j_audio_bps;
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onVideoProgress",
             "(Ljava/lang/String;JJII)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const batchpress::fs::path& path,
             uint64_t fdone, uint64_t ftotal,
             uint32_t fdn, uint32_t ftt) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(path.filename().string().c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jlong>(fdone), static_cast<jlong>(ftotal),
                     static_cast<jint>(fdn), static_cast<jint>(ftt));
                 cb_env->DeleteLocalRef(p);
@@ -262,22 +298,24 @@ Java_com_batchpress_BatchPress_scanFiles(
     cfg.num_threads    = static_cast<size_t>(j_threads);
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onScanProgress",
             "(Ljava/lang/String;II)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const std::string& name, uint32_t done, uint32_t total) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(name.c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jint>(done), static_cast<jint>(total));
                 cb_env->DeleteLocalRef(p);
             }
@@ -482,23 +520,25 @@ Java_com_batchpress_BatchPress_processFiles(
             image_items.push_back(std::move(it));
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onProgress",
             "(Ljava/lang/String;ZIZJJZ)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const batchpress::TaskResult& res, uint64_t done, uint64_t total) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(
                     res.input_path.filename().string().c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jboolean>(res.success),
                     static_cast<jboolean>(res.skipped),
                     static_cast<jint>(done),
@@ -632,24 +672,26 @@ Java_com_batchpress_BatchPress_processVideoFiles(
     }
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onVideoProgress",
             "(Ljava/lang/String;JJII)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const batchpress::fs::path& path,
             uint64_t fdone, uint64_t ftotal,
             uint32_t fdn, uint32_t ftt) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(path.filename().string().c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jlong>(fdone), static_cast<jlong>(ftotal),
                     static_cast<jint>(fdn), static_cast<jint>(ftt));
                 cb_env->DeleteLocalRef(p);
@@ -703,22 +745,24 @@ Java_com_batchpress_BatchPress_runScan(
     cfg.num_threads     = static_cast<size_t>(j_threads);
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onScanProgress",
             "(Ljava/lang/String;II)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const std::string& name, uint32_t done, uint32_t total) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(name.c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jint>(done), static_cast<jint>(total));
                 cb_env->DeleteLocalRef(p);
             }
@@ -768,22 +812,24 @@ Java_com_batchpress_BatchPress_runVideoScan(
     cfg.num_threads = static_cast<size_t>(j_threads);
 
     if (j_listener) {
-        jobject g_listener = env->NewGlobalRef(j_listener);
+        JniGlobalRef g_listener(env, j_listener);
         jclass  lc = env->GetObjectClass(j_listener);
         jmethodID mid = env->GetMethodID(lc, "onScanProgress",
             "(Ljava/lang/String;II)V");
+        env->DeleteLocalRef(lc);
 
-        cfg.on_progress = [g_listener, mid](
+        cfg.on_progress = [g_ref = g_listener.get(), mid](
             const std::string& name, uint32_t done, uint32_t total) {
             JNIEnv* cb_env = nullptr;
             bool attached = false;
             if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                g_jvm->AttachCurrentThread(&cb_env, nullptr);
-                attached = true;
+                if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
+                    attached = true;
+                }
             }
             if (cb_env && mid) {
                 jstring p = cb_env->NewStringUTF(name.c_str());
-                cb_env->CallVoidMethod(g_listener, mid, p,
+                cb_env->CallVoidMethod(g_ref, mid, p,
                     static_cast<jint>(done), static_cast<jint>(total));
                 cb_env->DeleteLocalRef(p);
             }
@@ -898,6 +944,19 @@ Java_com_batchpress_BatchPress_scanVideoFiles(
     uint32_t total = static_cast<uint32_t>(video_paths.size());
     uint32_t done = 0;
 
+    // Setup listener callback before loop
+    jobject g_ref = nullptr;
+    jmethodID mid = nullptr;
+    if (j_listener) {
+        static JniGlobalRef* s_listener = nullptr;
+        delete s_listener;
+        s_listener = new JniGlobalRef(env, j_listener);
+        g_ref = s_listener->get();
+        jclass lc = env->GetObjectClass(j_listener);
+        mid = env->GetMethodID(lc, "onScanProgress", "(Ljava/lang/String;II)V");
+        env->DeleteLocalRef(lc);
+    }
+
     for (const auto& vp : video_paths) {
         try {
             batchpress::VideoMeta vm = batchpress::read_video_meta(vp);
@@ -955,26 +1014,21 @@ Java_com_batchpress_BatchPress_scanVideoFiles(
             items.push_back(std::move(fi));
 
             // Progress callback
-            if (j_listener) {
+            if (j_listener && mid) {
                 ++done;
-                jobject g_listener = env->NewGlobalRef(j_listener);
-                jclass lc = env->GetObjectClass(j_listener);
-                jmethodID mid = env->GetMethodID(lc, "onScanProgress", "(Ljava/lang/String;II)V");
-                if (mid) {
-                    JNIEnv* cb_env = nullptr;
-                    bool attached = false;
-                    if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
-                        g_jvm->AttachCurrentThread(&cb_env, nullptr);
+                JNIEnv* cb_env = nullptr;
+                bool attached = false;
+                if (g_jvm->GetEnv(reinterpret_cast<void**>(&cb_env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+                    if (g_jvm->AttachCurrentThread(&cb_env, nullptr) == JNI_OK) {
                         attached = true;
                     }
-                    if (cb_env) {
-                        jstring p = cb_env->NewStringUTF(vp.filename().string().c_str());
-                        cb_env->CallVoidMethod(g_listener, mid, p, static_cast<jint>(done), static_cast<jint>(total));
-                        cb_env->DeleteLocalRef(p);
-                    }
-                    if (attached) g_jvm->DetachCurrentThread();
                 }
-                env->DeleteGlobalRef(g_listener);
+                if (cb_env) {
+                    jstring p = cb_env->NewStringUTF(vp.filename().string().c_str());
+                    cb_env->CallVoidMethod(g_ref, mid, p, static_cast<jint>(done), static_cast<jint>(total));
+                    cb_env->DeleteLocalRef(p);
+                }
+                if (attached) g_jvm->DetachCurrentThread();
             }
         } catch (...) {
             // Skip unreadable videos
