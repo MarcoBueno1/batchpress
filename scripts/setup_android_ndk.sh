@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup_android_ndk.sh
-# Downloads ffmpeg-kit and configures the build environment for Android.
+# Downloads Android NDK and ffmpeg-kit, then configures the build environment.
 #
 # Usage:
 #   ./scripts/setup_android_ndk.sh [abi]
@@ -25,75 +25,82 @@ echo "  NDK:         $NDK_DIR"
 echo "  FFMPEG-KIT:  $FFMPEG_KIT_DIR"
 echo ""
 
+# ── Check/Create directories ──────────────────────────────────────────────────
+mkdir -p "$FFMPEG_KIT_DIR/android/include"
+mkdir -p "$FFMPEG_KIT_DIR/android/libs/$ABI"
+
 # ── Check NDK ─────────────────────────────────────────────────────────────────
 if [ ! -f "$NDK_DIR/build/cmake/android.toolchain.cmake" ]; then
-    echo "[ERROR] Android NDK not found at $NDK_DIR"
-    echo ""
-    echo "  Download from: https://developer.android.com/ndk/downloads"
-    echo "  Or run: sdkmanager \"ndk;27.2.12479018\""
-    exit 1
+    echo "[DOWNLOAD] Android NDK r27c..."
+    mkdir -p "$ANDROID_SDK_DIR"
+    cd "$ANDROID_SDK_DIR"
+    if [ ! -f "android-ndk-r27c-linux.zip" ]; then
+        wget -q --show-progress "https://dl.google.com/android/repository/android-ndk-r27c-linux.zip" -O ndk.zip
+    fi
+    unzip -q ndk.zip
+    rm -f ndk.zip
 fi
 echo "[OK] NDK found: $NDK_DIR"
 
 # ── Check/Download ffmpeg-kit ─────────────────────────────────────────────────
-if [ -d "$FFMPEG_KIT_DIR/android/libs/$ABI" ]; then
+HAS_VIDEO=false
+if ls "$FFMPEG_KIT_DIR/android/libs/$ABI/"*.so &>/dev/null 2>&1; then
     echo "[OK] ffmpeg-kit found for $ABI"
+    HAS_VIDEO=true
 else
     echo ""
-    echo "[!] ffmpeg-kit not found. Attempting to download..."
-    echo ""
+    echo "[DOWNLOAD] ffmpeg-kit (62MB)..."
     
-    # Create directory structure
-    mkdir -p "$FFMPEG_KIT_DIR/android/include"
-    mkdir -p "$FFMPEG_KIT_DIR/android/libs/$ABI"
-    
-    # Try downloading from known sources
-    AAR_URL="https://github.com/arthenica/ffmpeg-kit/releases/download/v6.0/ffmpeg-kit-full-6.0-android.aar"
+    # Download from Grayjay GitLab mirror (official ffmpeg-kit AAR)
+    AAR_URL="https://gitlab.futo.org/videostreaming/grayjay/-/raw/315/app/aar/ffmpeg-kit-full-6.0-2.LTS.aar"
     AAR_FILE="$ANDROID_SDK_DIR/ffmpeg-kit.aar"
     
-    if command -v wget &>/dev/null; then
-        wget -q --timeout=30 --show-progress "$AAR_URL" -O "$AAR_FILE" 2>/dev/null || true
-    elif command -v curl &>/dev/null; then
-        curl -sL -o "$AAR_FILE" "$AAR_URL" || true
+    if [ ! -f "$AAR_FILE" ] || [ ! -s "$AAR_FILE" ]; then
+        cd "$ANDROID_SDK_DIR"
+        wget -q --show-progress "$AAR_URL" -O "$AAR_FILE"
     fi
     
-    if [ -s "$AAR_FILE" ] && [ "$(stat -c%s "$AAR_FILE" 2>/dev/null || echo 0)" -gt 1000 ]; then
-        echo "[OK] Downloaded ffmpeg-kit AAR ($(du -h "$AAR_FILE" | cut -f1))"
-        echo "  Extracting..."
-        unzip -q "$AAR_FILE" -d "$ANDROID_SDK_DIR/ffmpeg-kit-extracted"
+    if [ -s "$AAR_FILE" ]; then
+        echo "[EXTRACT] ffmpeg-kit..."
+        EXTRACT_DIR="$ANDROID_SDK_DIR/ffmpeg-kit-extracted"
+        rm -rf "$EXTRACT_DIR"
+        unzip -q "$AAR_FILE" -d "$EXTRACT_DIR"
         
-        # Copy headers
-        if [ -d "$ANDROID_SDK_DIR/ffmpeg-kit-extracted/android/$ABI/include" ]; then
-            cp -r "$ANDROID_SDK_DIR/ffmpeg-kit-extracted/android/$ABI/include/"* "$FFMPEG_KIT_DIR/android/include/" 2>/dev/null || true
+        # Copy native libraries
+        if [ -d "$EXTRACT_DIR/jni/$ABI" ]; then
+            cp "$EXTRACT_DIR/jni/$ABI/"*.so "$FFMPEG_KIT_DIR/android/libs/$ABI/"
+            echo "[OK] Native libs for $ABI: $(ls "$FFMPEG_KIT_DIR/android/libs/$ABI/"*.so | wc -l) files"
         fi
         
-        # Copy libraries
-        if [ -d "$ANDROID_SDK_DIR/ffmpeg-kit-extracted/android/$ABI" ]; then
-            cp "$ANDROID_SDK_DIR/ffmpeg-kit-extracted/android/$ABI/"*.so "$FFMPEG_KIT_DIR/android/libs/$ABI/" 2>/dev/null || true
+        # Download and copy FFmpeg headers
+        if [ ! -d "$FFMPEG_KIT_DIR/android/include/libavcodec" ]; then
+            echo "[DOWNLOAD] FFmpeg headers..."
+            SRC_FILE="$ANDROID_SDK_DIR/ffmpeg-src.tar.gz"
+            if [ ! -f "$SRC_FILE" ]; then
+                wget -q --show-progress "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n6.0.tar.gz" -O "$SRC_FILE"
+            fi
+            tar -xzf "$SRC_FILE" -C "$ANDROID_SDK_DIR" FFmpeg-n6.0/libavcodec FFmpeg-n6.0/libavformat FFmpeg-n6.0/libavutil FFmpeg-n6.0/libswscale FFmpeg-n6.0/libswresample 2>/dev/null || true
+            
+            for dir in libavcodec libavformat libavutil libswscale libswresample; do
+                mkdir -p "$FFMPEG_KIT_DIR/android/include/$dir"
+                cp "$ANDROID_SDK_DIR/FFmpeg-n6.0/$dir/"*.h "$FFMPEG_KIT_DIR/android/include/$dir/" 2>/dev/null || true
+            done
+            
+            # Create generated header
+            cat > "$FFMPEG_KIT_DIR/android/include/libavutil/avconfig.h" << 'AVCONFIG'
+#ifndef AVUTIL_AVCONFIG_H
+#define AVUTIL_AVCONFIG_H
+#define AV_HAVE_BIGENDIAN 0
+#define AV_HAVE_FAST_UNALIGNED 1
+#endif
+AVCONFIG
+            echo "[OK] FFmpeg headers copied"
         fi
         
-        rm -rf "$ANDROID_SDK_DIR/ffmpeg-kit-extracted" "$AAR_FILE"
-        
-        if [ -d "$FFMPEG_KIT_DIR/android/libs/$ABI" ] && ls "$FFMPEG_KIT_DIR/android/libs/$ABI/"*.so &>/dev/null; then
-            echo "[OK] ffmpeg-kit extracted for $ABI"
-        else
-            echo "[WARN] Extraction incomplete — video support may not work"
-        fi
+        rm -rf "$EXTRACT_DIR"
+        HAS_VIDEO=true
     else
-        rm -f "$AAR_FILE"
-        echo ""
-        echo "╔══════════════════════════════════════════════════════╗"
-        echo "║  Manual Setup Required                              ║"
-        echo "╠══════════════════════════════════════════════════════╣"
-        echo "║  Download ffmpeg-kit-full-6.0-android.aar from:     ║"
-        echo "║  https://github.com/arthenica/ffmpeg-kit/releases    ║"
-        echo "║                                                      ║"
-        echo "║  Then extract:                                       ║"
-        echo "║    unzip ffmpeg-kit-full-6.0-android.aar             ║"
-        echo "║    cp -r android/<abi>/include/* $FFMPEG_KIT_DIR/android/include/   ║"
-        echo "║    cp android/<abi>/*.so $FFMPEG_KIT_DIR/android/libs/<abi>/        ║"
-        echo "╚══════════════════════════════════════════════════════╝"
-        echo ""
+        echo "[WARN] Download failed — video support will not be available"
     fi
 fi
 
@@ -101,10 +108,9 @@ fi
 echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "To build for Android:"
-echo ""
 
-if [ -d "$FFMPEG_KIT_DIR/android/libs/$ABI" ] && ls "$FFMPEG_KIT_DIR/android/libs/$ABI/"*.so &>/dev/null; then
+if [ "$HAS_VIDEO" = true ]; then
+    echo "  # Build WITH video support:"
     echo "  cmake -B build-android \\"
     echo "      -DCMAKE_TOOLCHAIN_FILE=$NDK_DIR/build/cmake/android.toolchain.cmake \\"
     echo "      -DANDROID_ABI=$ABI \\"
@@ -113,7 +119,7 @@ if [ -d "$FFMPEG_KIT_DIR/android/libs/$ABI" ] && ls "$FFMPEG_KIT_DIR/android/lib
     echo "      -DCMAKE_BUILD_TYPE=Release"
     echo "  cmake --build build-android --parallel"
 else
-    echo "  # Without video support (images only):"
+    echo "  # Build WITHOUT video support:"
     echo "  cmake -B build-android \\"
     echo "      -DCMAKE_TOOLCHAIN_FILE=$NDK_DIR/build/cmake/android.toolchain.cmake \\"
     echo "      -DANDROID_ABI=$ABI \\"
@@ -121,12 +127,10 @@ else
     echo "      -DBATCHPRESS_ENABLE_VIDEO=OFF \\"
     echo "      -DCMAKE_BUILD_TYPE=Release"
     echo "  cmake --build build-android --parallel"
-    echo ""
-    echo "  # After downloading ffmpeg-kit, re-run with -DFFMPEG_KIT_DIR=$FFMPEG_KIT_DIR"
 fi
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "  Output: libbatchpress_core.so (+ libbatchpress_jni.so if JNI bridge exists)"
+echo "  Output: libbatchpress_core.so (+ libbatchpress_jni.so)"
 echo ""
