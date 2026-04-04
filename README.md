@@ -1,10 +1,10 @@
 # batchpress
 
-> **Parallel media compressor written in C++17.**  
-> Batch compress images and videos in-place or to a separate directory,  
+> **Parallel media compressor written in C++17.**
+> Batch compress images and videos in-place or to a separate directory,
 > with adaptive codec selection, dry-run projection and per-directory scan reports.
 
-![CI](https://github.com/YOUR_USERNAME/batchpress/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/MarcoBueno1/batchpress/actions/workflows/ci.yml/badge.svg)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20Android-lightgrey)
@@ -19,6 +19,9 @@
 # Scan first — see projected savings before touching anything
 batchpress --input /sdcard/DCIM --scan-all
 
+# Interactive select — pick files, then process
+batchpress --input /sdcard/DCIM --select
+
 # Apply in-place (default)
 batchpress --input /sdcard/DCIM
 
@@ -30,6 +33,8 @@ batchpress --input ./raw/ --output ./compressed/
 
 ## Quick demo
 
+### Scan mode
+
 ```
 $ batchpress --input ./media/ --scan-all
 
@@ -37,8 +42,8 @@ $ batchpress --input ./media/ --scan-all
 
 ── Images ──────────────────────────────────────────────
 ┌─ /media/photos/  (2847 images  │  1.8 GB)
-│  Best: WebP q85 fit:1920x1080
-│  ████████████████████  1.8 GB → 213 MB  save 88%  ★★★
+│  Best: WebP q60 50%
+│  ████████████████████  1.8 GB → 44 KB  save 98%  ★★★
 └
 
 ── Videos ──────────────────────────────────────────────
@@ -51,10 +56,25 @@ $ batchpress --input ./media/ --scan-all
 ║  COMBINED TOTAL                                      ║
 ║  Current total         50.1 GB                      ║
 ║  Total freed       31.3 GB  (62%)                   ║
-║                                                      ║
-║  To apply:                                           ║
-║  batchpress --input ./media/                        ║
 ╚══════════════════════════════════════════════════════╝
+```
+
+### Interactive select mode
+
+```
+$ batchpress --input ./media/ --select
+
+  batchpress — Select Files to Process
+
+  Filter: (type to filter)
+  15/15 selected  |  2.9 MB → 393 KB
+
+  [✓] photo_4k_gradient.webp       841 KB  96%  IMG
+  [✓] photo_fullhd_circles.webp    283 KB  95%  IMG
+  [✓] video_1080p_h264_speech.mp4   12 MB  60%  VID
+  >[✓] photo_hd_stripes.webp        52 KB  94%  IMG
+
+  ↑↓/kj:navigate  Space:toggle  a:all  i:invert  Enter:process  q:quit
 ```
 
 ---
@@ -67,6 +87,7 @@ $ batchpress --input ./media/ --scan-all
 | **Videos** | Transcode with H.265 › H.264 › VP9 — auto-selects best available codec |
 | **Audio** | Classifies speech/music/silent → picks optimal bitrate automatically |
 | **Scan mode** | Analyses directories and projects savings before writing anything |
+| **Select mode** | Interactive TUI — pick individual files to process with Space/Enter |
 | **Dry-run** | Full encode in RAM — accurate projection, nothing written to disk |
 | **In-place** | Adaptive write strategy: Safe (atomic rename) or Direct (zero extra space) |
 | **Parallel** | Custom C++17 thread pool — saturates all CPU cores |
@@ -81,38 +102,83 @@ $ batchpress --input ./media/ --scan-all
 batchpress/
 ├── core/                        ← libbatchpress_core.so
 │   ├── include/batchpress/
-│   │   ├── types.hpp            ← Config, TaskResult, BatchReport
+│   │   ├── types.hpp            ← Config, FileItem, TaskResult, BatchReport
 │   │   ├── processor.hpp        ← Image pipeline API
-│   │   ├── scanner.hpp          ← Image scan API
+│   │   ├── scanner.hpp          ← Image scan + scan_files() API
 │   │   ├── video_processor.hpp  ← Video pipeline + scan API
 │   │   ├── thread_pool.hpp      ← Header-only thread pool
 │   │   └── export.hpp           ← Symbol visibility macros
 │   └── src/
 │       ├── types.cpp
-│       ├── processor.cpp        ← stb_image + adaptive write
-│       ├── scanner.cpp          ← Per-dir sampling + candidate ranking
+│       ├── sha256.hpp           ← Streaming SHA-256 (shared)
+│       ├── processor.cpp        ← stb_image + adaptive write + WebP
+│       ├── scanner.cpp          ← Per-file scan + candidate ranking
 │       └── video_processor.cpp  ← libav encode/decode + audio classification
 │
 └── ui/
     ├── cli/                     ← batchpress executable (Linux/Windows)
+    │   ├── main.cpp             ← Mode dispatcher
+    │   ├── cli.cpp              ← Argument parser + help
+    │   ├── select.cpp           ← Interactive TUI (terminal UI)
+    │   ├── progress.cpp         ← Progress bar
+    │   └── scan_report.cpp      ← Scan report formatting
     ├── android/                 ← libbatchpress_jni.so + BatchPress.java
     └── qt/                      ← Qt6 desktop GUI (placeholder)
 ```
 
+---
+
+## Library API
+
 The core library has **zero UI code**. All progress is delivered via a callback:
+
+### Traditional batch (auto-process everything)
 
 ```cpp
 batchpress::Config cfg;
 cfg.input_dir = "/path/to/media";
+cfg.resize    = batchpress::parse_resize("fit:1920x1080");
+cfg.format    = batchpress::ImageFormat::WebP;
+cfg.quality   = 85;
 
 cfg.on_progress = [](const batchpress::TaskResult& res,
-                     uint32_t done, uint32_t total) {
+                     uint64_t done, uint64_t total) {
     // CLI → print to terminal
     // Qt  → emit signal to QProgressBar
     // Android → call Java via JNI
 };
 
 batchpress::BatchReport report = batchpress::run_batch(cfg);
+```
+
+### Selective processing (scan → user picks → process)
+
+```cpp
+// 1. Scan all files with projected savings
+batchpress::ScanConfig scan_cfg;
+scan_cfg.root_dir = "/path/to/media";
+scan_cfg.recursive = true;
+auto report = batchpress::scan_files(scan_cfg);
+
+// report.files now contains FileItem with:
+//   filename, path, timestamps, type, dimensions, file_size
+//   projected_size, savings_pct, suggested_codec
+
+// 2. Let the UI filter / let user pick which files to process
+std::vector<batchpress::FileItem> selected;
+for (const auto& f : report.files) {
+    if (f.savings_pct > 50.0)  // example filter
+        selected.push_back(f);
+}
+
+// 3. Process only the selected files
+batchpress::Config cfg;
+cfg.format  = batchpress::ImageFormat::WebP;
+cfg.quality = 85;
+auto result = batchpress::process_files(selected, cfg);
+
+// Same for videos:
+auto vid_result = batchpress::process_video_files(selected, vid_cfg);
 ```
 
 ---
@@ -124,19 +190,15 @@ batchpress::BatchReport report = batchpress::run_batch(cfg);
 ```bash
 # Install dependencies
 sudo apt install libavcodec-dev libavformat-dev libavutil-dev \
-                 libswscale-dev libswresample-dev libgtest-dev cmake ninja-build
+                 libswscale-dev libswresample-dev libwebp-dev \
+                 libgtest-dev cmake ninja-build
 
-# Download stb headers
-curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image.h \
-     -o core/third_party/stb_image.h
-curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h \
-     -o core/third_party/stb_image_write.h
-curl -sL https://raw.githubusercontent.com/nothings/stb/master/stb_image_resize2.h \
-     -o core/third_party/stb_image_resize2.h
-
+# Download stb headers (auto-downloaded by CMake if missing)
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
+
+> **Note:** WebP support requires `libwebp-dev`. Without it, WebP encoding falls back to PNG.
 
 ### Android NDK (via ffmpeg-kit)
 
@@ -158,7 +220,7 @@ cmake --build build-android --parallel
 ### Windows (vcpkg)
 
 ```powershell
-vcpkg install ffmpeg
+vcpkg install ffmpeg libwebp
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
 ```
@@ -176,6 +238,11 @@ MODES:
   --scan              Analyse images → suggest best format/resize
   --scan-video        Analyse videos → detect best codec/CRF for this system
   --scan-all          Analyse both images and videos
+  --select            Interactive file selection — pick files, then process
+
+SELECT OPTIONS:
+  --filter <type>     image | video | all  (only show matching types)
+  --min-savings <pct> Only show files with >= this savings %
 
 OUTPUT:
   --output <dir>      Write to separate directory (disables in-place)
@@ -194,10 +261,23 @@ COMMON:
   --threads <n>       Worker threads (default: CPU cores)
   --no-recursive      Do not traverse subdirectories
   --overwrite         Overwrite existing output files
+  --no-dedup          Disable duplicate detection (default: enabled)
   --samples <n>       Scan: images sampled per directory (default: 5)
   --verbose           Detailed output
   --help              Show help
 ```
+
+### Interactive select controls
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` or `k` `j` | Navigate file list |
+| `Space` | Toggle selection of current file |
+| `a` | Select / Deselect all |
+| `i` | Invert selection |
+| `Enter` | Process selected files |
+| `q` / `Ctrl+C` | Quit without processing |
+| *type any text* | Filter by filename substring |
 
 ---
 
