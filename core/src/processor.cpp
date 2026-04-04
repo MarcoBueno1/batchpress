@@ -469,4 +469,81 @@ BatchReport run_batch(const Config& cfg) {
     return report;
 }
 
+// ── process_files (selective file processing) ────────────────────────────────
+
+BatchReport process_files(const std::vector<FileItem>& files, const Config& cfg) {
+    using Clock = std::chrono::steady_clock;
+
+    // Initialize hash cache if dedup is enabled
+    Config cfg_with_cache = cfg;
+    if (cfg.dedup_enabled && !cfg.hash_cache) {
+        cfg_with_cache.hash_cache = std::make_shared<HashCache>();
+    }
+
+    // Filter only image items
+    std::vector<fs::path> paths;
+    paths.reserve(files.size());
+    for (const auto& fi : files) {
+        if (fi.type == FileItem::Type::Image) {
+            paths.push_back(fi.path);
+        }
+    }
+
+    if (paths.empty()) return {};
+
+    if (!cfg.inplace() && !cfg.dry_run)
+        fs::create_directories(cfg.output_dir);
+
+    BatchReport report;
+    report.total   = static_cast<uint32_t>(paths.size());
+    report.dry_run = cfg.dry_run;
+
+    std::mutex      report_mu;
+    std::atomic<uint32_t> done{0};
+
+    size_t threads = cfg.num_threads > 0
+        ? cfg.num_threads
+        : std::thread::hardware_concurrency();
+
+    ThreadPool pool(threads);
+    auto t0 = Clock::now();
+
+    std::vector<std::future<TaskResult>> futures;
+    futures.reserve(paths.size());
+    for (const auto& p : paths)
+        futures.push_back(pool.submit(process_image, p, std::cref(cfg_with_cache)));
+
+    for (auto& fut : futures) {
+        TaskResult res = fut.get();
+        uint32_t n = done.fetch_add(1, std::memory_order_relaxed) + 1;
+
+        // ── Aggregate report (thread-safe) ────────────────────────────────
+        {
+            std::lock_guard lock(report_mu);
+            if (res.skipped) {
+                if (res.is_duplicate) {
+                    ++report.duplicates_found;
+                } else {
+                    ++report.skipped;  // skip_existing
+                }
+            } else if (res.success) {
+                ++report.succeeded;
+                report.input_bytes_total  += res.input_bytes;
+                report.output_bytes_total += res.output_bytes;
+                if (res.write_mode == WriteMode::Safe)   ++report.written_safe;
+                if (res.write_mode == WriteMode::Direct) ++report.written_direct;
+            } else {
+                ++report.failed;
+            }
+        }
+
+        // ── Notify UI via callback ────────────────────────────────────────
+        if (cfg.on_progress)
+            cfg.on_progress(res, n, report.total);
+    }
+
+    report.elapsed_sec = std::chrono::duration<double>(Clock::now()-t0).count();
+    return report;
+}
+
 } // namespace batchpress

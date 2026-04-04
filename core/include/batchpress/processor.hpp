@@ -67,4 +67,23 @@ BATCHPRESS_API TaskResult process_image(const fs::path& input_path,
  */
 BATCHPRESS_API BatchReport run_batch(const Config& cfg);
 
+// ── Selective file processing API ─────────────────────────────────────────────
+
+/**
+ * @brief Processes a user-selected list of image files.
+ *
+ * Instead of scanning and processing everything automatically,
+ * this function accepts a pre-filtered list of FileItem (images only)
+ * and processes each one using the provided Config.
+ *
+ * The FileItem list should come from a prior call to scan_files().
+ * The UI can filter / sort / let the user pick items before calling this.
+ *
+ * @param files      List of image FileItems to process (from scan_files)
+ * @param cfg        Processing configuration (resize, format, quality, etc.)
+ * @return           Aggregated BatchReport for the processed files
+ */
+BATCHPRESS_API BatchReport process_files(const std::vector<FileItem>& files,
+                                         const Config& cfg);
+
 } // namespace batchpress

@@ -309,4 +309,23 @@ BATCHPRESS_API VideoBatchReport run_video_batch(const VideoConfig& cfg);
  */
 BATCHPRESS_API VideoScanReport run_video_scan(const VideoScanConfig& cfg);
 
+// ── Selective video file processing API ───────────────────────────────────────
+
+/**
+ * @brief Processes a user-selected list of video files.
+ *
+ * Instead of scanning and processing everything automatically,
+ * this function accepts a pre-filtered list of FileItem (videos only)
+ * and processes each one using the provided VideoConfig.
+ *
+ * The FileItem list should come from a prior call to scan_files().
+ * The UI can filter / sort / let the user pick items before calling this.
+ *
+ * @param files      List of video FileItems to process (from scan_files)
+ * @param cfg        Processing configuration (codec, CRF, resolution, etc.)
+ * @return           Aggregated VideoBatchReport for the processed files
+ */
+BATCHPRESS_API VideoBatchReport process_video_files(const std::vector<FileItem>& files,
+                                                     const VideoConfig& cfg);
+
 } // namespace batchpress

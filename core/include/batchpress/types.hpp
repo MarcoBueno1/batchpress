@@ -160,6 +160,93 @@ struct BATCHPRESS_API Config {
     std::shared_ptr<HashCache> hash_cache;
 };
 
+// ── File Item for selective processing ────────────────────────────────────────
+
+/**
+ * @brief Represents a single media file with metadata and projected savings.
+ *
+ * Returned by scan_files() so UI can display per-file details and let
+ * the user choose which files to actually process.
+ */
+struct BATCHPRESS_API FileItem {
+    enum class Type { Image, Video } type = Type::Image;
+
+    fs::path    path;                   ///< Absolute path to the file
+    std::string filename;               ///< Just the filename with extension
+
+    // Timestamps
+    std::filesystem::file_time_type creation_time;   ///< File creation time
+    std::filesystem::file_time_type last_access;     ///< Last access time
+    std::filesystem::file_time_type last_modified;   ///< Last modification time
+
+    // Dimensions (images: pixels, videos: resolution)
+    uint32_t    width  = 0;
+    uint32_t    height = 0;
+
+    // File size
+    uint64_t    file_size = 0;          ///< File size in bytes
+
+    // Projected compression results (estimated by scan)
+    uint64_t    projected_size = 0;     ///< Estimated size after compression
+    double      savings_pct = 0.0;      ///< Expected savings percentage (0-100)
+
+    // Image-specific: format info
+    std::string format;                 ///< e.g. "JPEG", "PNG", "WebP"
+    std::string suggested_codec;        ///< e.g. "WebP q85 fit:1920x1080"
+
+    // Video-specific: duration, codecs
+    double      duration_sec = 0.0;     ///< Video duration in seconds (0 for images)
+    std::string video_codec;            ///< Current video codec name
+    std::string audio_codec;            ///< Current audio codec name
+
+    // Computed helpers
+    uint64_t projected_savings() const noexcept {
+        return (file_size > projected_size) ? (file_size - projected_size) : 0;
+    }
+};
+
+/**
+ * @brief Report returned by scan_files().
+ *
+ * Contains a flat list of all discovered files with per-file metadata
+ * and projected savings estimates.
+ */
+struct BATCHPRESS_API FileScanReport {
+    std::vector<FileItem> files;
+    double   elapsed_sec = 0.0;
+
+    uint64_t total_size() const noexcept {
+        uint64_t sum = 0;
+        for (auto& f : files) sum += f.file_size;
+        return sum;
+    }
+    uint64_t total_projected_size() const noexcept {
+        uint64_t sum = 0;
+        for (auto& f : files) sum += f.projected_size;
+        return sum;
+    }
+    uint64_t total_savings() const noexcept {
+        uint64_t total = total_size();
+        uint64_t projected = total_projected_size();
+        return (total > projected) ? (total - projected) : 0;
+    }
+    double overall_savings_pct() const noexcept {
+        uint64_t total = total_size();
+        if (total == 0) return 0.0;
+        return 100.0 * (1.0 - static_cast<double>(total_projected_size()) / static_cast<double>(total));
+    }
+    uint32_t image_count() const noexcept {
+        uint32_t c = 0;
+        for (auto& f : files) if (f.type == FileItem::Type::Image) c++;
+        return c;
+    }
+    uint32_t video_count() const noexcept {
+        uint32_t c = 0;
+        for (auto& f : files) if (f.type == FileItem::Type::Video) c++;
+        return c;
+    }
+};
+
 // ── Batch report ──────────────────────────────────────────────────────────────
 
 struct BATCHPRESS_API BatchReport {

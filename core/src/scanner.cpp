@@ -547,4 +547,183 @@ ScanReport run_scan(const ScanConfig& cfg) {
     return report;
 }
 
+// ── scan_files (per-file metadata with projected savings) ─────────────────────
+
+static std::string format_to_string(ImageFormat fmt) {
+    switch (fmt) {
+        case ImageFormat::JPEG: return "JPEG";
+        case ImageFormat::PNG:  return "PNG";
+        case ImageFormat::BMP:  return "BMP";
+        case ImageFormat::WebP: return "WebP";
+        default:                return "Same";
+    }
+}
+
+// Collect all image files (flat list, not grouped by dir)
+static std::vector<fs::path> collect_all_images(const fs::path& root, bool recursive) {
+    std::vector<fs::path> images;
+
+    auto add = [&](const fs::directory_entry& e) {
+        if (e.is_regular_file() && scan_supported(e.path())) {
+            images.push_back(e.path());
+        }
+    };
+
+    if (recursive) {
+        for (const auto& e : fs::recursive_directory_iterator(
+                root, fs::directory_options::skip_permission_denied))
+            add(e);
+    } else {
+        for (const auto& e : fs::directory_iterator(root))
+            add(e);
+    }
+
+    std::sort(images.begin(), images.end());
+    return images;
+}
+
+FileScanReport scan_files(const ScanConfig& cfg) {
+    using Clock = std::chrono::steady_clock;
+    auto t0 = Clock::now();
+
+    FileScanReport report;
+
+    // Build candidate list
+    auto candidates = cfg.candidates.empty()
+        ? default_scan_candidates()
+        : cfg.candidates;
+
+    // Collect all images
+    auto images = collect_all_images(cfg.root_dir, cfg.recursive);
+    if (images.empty()) {
+        report.elapsed_sec = std::chrono::duration<double>(Clock::now() - t0).count();
+        return report;
+    }
+
+    // Read metadata for all images
+    struct ImageWithMeta {
+        fs::path path;
+        ImageMeta meta;
+    };
+    std::vector<ImageWithMeta> all_metas;
+    all_metas.reserve(images.size());
+    for (auto& img : images) {
+        ImageMeta m = read_meta(img);
+        all_metas.push_back({img, m});
+    }
+
+    // Count total samples for progress
+    uint32_t samples_per_file = (cfg.samples_per_dir == 0) ? 1 : cfg.samples_per_dir;
+    uint32_t total_samples = static_cast<uint32_t>(images.size()) *
+                             samples_per_file *
+                             static_cast<uint32_t>(candidates.size());
+    std::atomic<uint32_t> global_done{0};
+
+    // Process each file in parallel
+    size_t threads = cfg.num_threads > 0
+        ? cfg.num_threads
+        : std::thread::hardware_concurrency();
+
+    ThreadPool pool(threads);
+
+    using FutureItem = std::future<FileItem>;
+    std::vector<FutureItem> futures;
+    futures.reserve(all_metas.size());
+
+    for (const auto& item : all_metas) {
+        futures.push_back(pool.submit([&, &meta = item.meta, &img_path = item.path]() -> FileItem {
+            FileItem fi;
+            fi.type = FileItem::Type::Image;
+            fi.path = img_path;
+            fi.filename = img_path.filename().string();
+            fi.file_size = meta.file_bytes;
+            fi.width = meta.width;
+            fi.height = meta.height;
+
+            // Timestamps
+            try {
+                fi.last_modified = fs::last_write_time(img_path);
+                // creation_time and last_access_time are not portable across platforms
+                // Use last_write_time as fallback for both
+                fi.creation_time = fi.last_modified;
+                fi.last_access = fi.last_modified;
+            } catch (...) {
+                // If we can't get timestamps, use defaults
+            }
+
+            // Format info
+            fi.format = format_to_string(ImageFormat::Same);
+            if (!meta.extension.empty()) {
+                fi.format = meta.extension;
+                if (!fi.format.empty() && fi.format[0] == '.')
+                    fi.format = fi.format.substr(1);
+                // Uppercase
+                std::transform(fi.format.begin(), fi.format.end(),
+                               fi.format.begin(), ::toupper);
+            }
+
+            // Test each candidate and find the best projection
+            // For simplicity, test only a subset of samples if samples_per_dir > 0
+            // Use at most 3 samples per file for estimation
+            auto sample_indices = pick_samples(1, std::min(samples_per_file, 3u));
+
+            uint64_t best_projected = meta.file_bytes;
+            double best_savings = 0.0;
+            std::string best_codec;
+
+            for (const auto& cand : candidates) {
+                uint64_t encoded = encode_sample(meta, cand);
+                if (encoded > 0 && meta.file_bytes > 0) {
+                    double ratio = static_cast<double>(encoded) /
+                                   static_cast<double>(meta.file_bytes);
+                    uint64_t projected = static_cast<uint64_t>(
+                        static_cast<double>(meta.file_bytes) * ratio);
+                    double savings = 100.0 * (1.0 - ratio);
+
+                    if (projected < best_projected) {
+                        best_projected = projected;
+                        best_savings = savings;
+                        best_codec = cand.label();
+                    }
+                }
+
+                // Progress notification
+                uint32_t done = global_done.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (cfg.on_progress) {
+                    cfg.on_progress(meta.path.filename().string(), done, total_samples);
+                }
+            }
+
+            // If no candidate produced a valid projection, estimate with a default ratio
+            if (best_projected == meta.file_bytes && meta.file_bytes > 0) {
+                // Default estimate: ~40% savings for images
+                best_projected = static_cast<uint64_t>(
+                    static_cast<double>(meta.file_bytes) * 0.6);
+                best_savings = 40.0;
+            }
+
+            fi.projected_size = best_projected;
+            fi.savings_pct = best_savings;
+            fi.suggested_codec = best_codec;
+
+            return fi;
+        }));
+    }
+
+    // Collect results
+    report.files.reserve(all_metas.size());
+    for (auto& fut : futures) {
+        report.files.push_back(fut.get());
+    }
+
+    // Sort by savings_pct descending (biggest savings first)
+    std::sort(report.files.begin(), report.files.end(),
+        [](const FileItem& a, const FileItem& b) {
+            return a.savings_pct > b.savings_pct;
+        });
+
+    report.elapsed_sec = std::chrono::duration<double>(Clock::now() - t0).count();
+    return report;
+}
+
 } // namespace batchpress

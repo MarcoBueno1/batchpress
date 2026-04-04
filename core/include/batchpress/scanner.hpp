@@ -159,4 +159,25 @@ BATCHPRESS_API std::vector<ScanCandidate> default_scan_candidates();
  */
 BATCHPRESS_API ScanReport run_scan(const ScanConfig& cfg);
 
+// ── File-level scan API (for selective processing) ────────────────────────────
+
+/**
+ * @brief Scans a directory tree and returns per-file metadata with projected savings.
+ *
+ * Unlike run_scan() which aggregates by directory, this function returns
+ * a flat list of FileItem — one per file — so the UI can let the user
+ * pick which files to process.
+ *
+ * For each file it collects:
+ *   - Name, path, timestamps, type, dimensions, file size
+ *   - Projected size after compression and savings percentage
+ *   - Suggested codec / format configuration
+ *
+ * Never writes to disk. Never modifies files.
+ *
+ * @param cfg        Scan configuration (root_dir, recursive, candidates, threads)
+ * @return           FileScanReport with one FileItem per discovered file
+ */
+BATCHPRESS_API FileScanReport scan_files(const ScanConfig& cfg);
+
 } // namespace batchpress

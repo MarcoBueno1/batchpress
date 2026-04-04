@@ -1127,4 +1127,97 @@ VideoScanReport run_video_scan(const VideoScanConfig& cfg) {
     return report;
 }
 
+// ── process_video_files (selective video processing) ─────────────────────────
+
+VideoBatchReport process_video_files(const std::vector<FileItem>& files,
+                                      const VideoConfig& cfg) {
+    using Clock = std::chrono::steady_clock;
+
+    // Initialize hash cache if dedup is enabled
+    VideoConfig cfg_with_cache = cfg;
+    if (cfg.dedup_enabled && !cfg.hash_cache) {
+        cfg_with_cache.hash_cache = std::make_shared<HashCache>();
+    }
+
+    // Filter only video items
+    std::vector<fs::path> paths;
+    paths.reserve(files.size());
+    for (const auto& fi : files) {
+        if (fi.type == FileItem::Type::Video) {
+            paths.push_back(fi.path);
+        }
+    }
+
+    if (paths.empty()) return {};
+
+    if (!cfg.inplace() && !cfg.dry_run)
+        fs::create_directories(cfg.output_dir);
+
+    VideoBatchReport report;
+    report.total   = static_cast<uint32_t>(paths.size());
+    report.dry_run = cfg.dry_run;
+
+    std::mutex      report_mu;
+    std::atomic<uint32_t> files_done{0};
+
+    size_t threads = cfg.num_threads > 0
+        ? cfg.num_threads
+        : std::max(size_t(1),
+                   size_t(std::thread::hardware_concurrency() / 2));
+
+    ThreadPool pool(threads);
+    auto t0 = Clock::now();
+
+    // Wrap per-file progress to inject files_done/total
+    auto make_cfg = [&](const fs::path& /*path*/) -> VideoConfig {
+        VideoConfig c = cfg_with_cache;
+        uint32_t fd = files_done.load(std::memory_order_relaxed);
+        if (cfg.on_progress) {
+            c.on_progress = [&cfg, fd, &report](
+                const fs::path& p, uint64_t fdone, uint64_t ftotal,
+                uint32_t, uint32_t)
+            {
+                if (cfg.on_progress)
+                    cfg.on_progress(p, fdone, ftotal, fd, report.total);
+            };
+        }
+        return c;
+    };
+
+    std::vector<std::future<VideoResult>> futures;
+    futures.reserve(paths.size());
+    for (const auto& v : paths)
+        futures.push_back(pool.submit(process_video, v, make_cfg(v)));
+
+    for (auto& fut : futures) {
+        VideoResult res = fut.get();
+        files_done.fetch_add(1, std::memory_order_relaxed);
+
+        std::lock_guard lock(report_mu);
+        if (res.skipped) {
+            if (res.is_duplicate) {
+                ++report.duplicates_found;
+            } else {
+                ++report.skipped;  // skip_existing
+            }
+        } else if (res.success) {
+            ++report.succeeded;
+            report.input_bytes_total  += res.input_bytes;
+            report.output_bytes_total += res.output_bytes;
+            switch (res.codec_used) {
+                case VideoCodec::H265: ++report.used_h265; break;
+                case VideoCodec::H264: ++report.used_h264; break;
+                case VideoCodec::VP9:  ++report.used_vp9;  break;
+                default: break;
+            }
+        } else {
+            ++report.failed;
+        }
+    }
+
+    report.elapsed_sec = std::chrono::duration<double>(
+                             Clock::now() - t0).count();
+    return report;
+}
+
 } // namespace batchpress
