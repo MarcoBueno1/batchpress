@@ -281,9 +281,9 @@ static void render_ui(const SelectState& state) {
     std::cout << "Output";
     term_goto(header_row, 76);
     std::cout << "Size";
-    term_goto(header_row, 88);
+    term_goto(header_row, 96);
     std::cout << "Gain%";
-    term_goto(header_row, 98);
+    term_goto(header_row, 108);
     std::cout << "Quality";
     term_reset_color();
 
@@ -357,12 +357,18 @@ static void render_ui(const SelectState& state) {
             term_reset_color();
         }
 
-        // Size
+        // Size: original → projected
         term_goto(row, 76);
         std::cout << fmt_bytes(fi.file_size);
+        if (fi.projected_size > 0 && fi.projected_size != fi.file_size) {
+            std::cout << " →";
+            term_color("32");  // green for savings
+            std::cout << fmt_bytes(fi.projected_size);
+            term_reset_color();
+        }
 
         // Savings
-        term_goto(row, 88);
+        term_goto(row, 96);
         if (fi.savings_pct > 0) {
             if (fi.savings_pct >= 60) term_color("32");       // green
             else if (fi.savings_pct >= 30) term_color("33");   // yellow
@@ -373,7 +379,7 @@ static void render_ui(const SelectState& state) {
         term_reset_color();
 
         // Quality estimate
-        term_goto(row, 98);
+        term_goto(row, 108);
         auto get_quality = [](const batchpress::FileItem& f) -> batchpress::QualityEstimate {
             if (f.type == batchpress::FileItem::Type::Image)
                 return f.image_info().quality;
