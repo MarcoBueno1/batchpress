@@ -659,12 +659,9 @@ FileScanReport scan_files(const ScanConfig& cfg) {
         all_metas.push_back({img, m});
     }
 
-    // Count total samples for progress
-    uint32_t samples_per_file = (cfg.samples_per_dir == 0) ? 1 : cfg.samples_per_dir;
-    uint32_t total_samples = static_cast<uint32_t>(images.size()) *
-                             samples_per_file *
-                             static_cast<uint32_t>(candidates.size());
-    std::atomic<uint32_t> global_done{0};
+    // Count total images for progress (report real file count, not samples)
+    uint32_t total_images = static_cast<uint32_t>(images.size());
+    std::atomic<uint32_t> files_done{0};
 
     // Process each file in parallel
     size_t threads = cfg.num_threads > 0
@@ -680,8 +677,7 @@ FileScanReport scan_files(const ScanConfig& cfg) {
     for (const auto& item : all_metas) {
         // Capture by value — safe for thread pool submission
         futures.push_back(pool.submit([meta = item.meta, img_path = item.path,
-                                        &candidates, samples_per_file,
-                                        &global_done, total_samples, &cfg]() -> FileItem {
+                                        &candidates, total_images, &files_done, &cfg]() -> FileItem {
             FileItem fi;
             fi.type = FileItem::Type::Image;
             fi.path = img_path;
@@ -731,12 +727,13 @@ FileScanReport scan_files(const ScanConfig& cfg) {
                         best_fmt = cand.format;
                     }
                 }
+                // Note: progress is reported after all candidates are tested
+            }
 
-                // Progress notification
-                uint32_t done = global_done.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (cfg.on_progress) {
-                    cfg.on_progress(meta.path.filename().string(), done, total_samples);
-                }
+            // Report progress: one file done
+            uint32_t done = files_done.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (cfg.on_progress) {
+                cfg.on_progress(meta.path.filename().string(), done, total_images);
             }
 
             // If no candidate produced a valid projection, estimate with a default ratio
